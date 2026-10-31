@@ -1,5 +1,5 @@
 user default off
-user telecom-ocs on >dev-only-redis-password ~idem:* ~ratelimit:* ~otp:* +@all -@dangerous +info
+user telecom-ocs on >dev-only-redis-password ~idem:* ~ratelimit:* ~otp:* ~session:* +@all -@dangerous +info
 user replica on >dev-only-replica-password +psync +replconf +ping
 user sentinel on >dev-only-sentinel-password allchannels +multi +slaveof +replicaof +ping +exec +subscribe +config|rewrite +role +publish +info +client|setname +client|kill +script|kill
 user ops on >dev-only-ops-password ~* &* +@all

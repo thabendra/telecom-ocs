@@ -126,6 +126,10 @@ telecom:
     overrides: {}                  # e.g. pgw-kandy-01: { capacity: 500, refill-per-second: 250 }
     max-in-flight: ${DB_POOL_SIZE:10}
     in-flight-wait: 50ms
+  # group 8: open charging sessions
+  charging:
+    session-expiry: 65m        # CH-8: no update for this long (grant validity 1 h + 5 min) -> expired
+    expire-sessions: true      # run the expiry every minute in this copy (safe in several copies)
   # group 5: commands for the gateways (outbox in gateway_command, polled at /charging/v1/commands)
   push:
     ack-timeout: 10s       # no ack within this -> delivered again

@@ -461,6 +461,32 @@ scripts/vpn-check.sh
 `vpn-check.sh` checks from the operator side: the WireGuard handshake, 8443 and 9443 open through the
 tunnel, 8080, 8081, Oracle and Redis closed, and one full charging session by the simulator.
 
+## Session ownership, expiry and report-only updates (group 8)
+
+**A session belongs to its gateway (CH-7).** `charging_session.gateway` (V11) is the certificate name of
+the gateway that started it. An update or release from any other gateway gets `404`, with the same
+message as a session that doesn't exist, so a gateway can't even find out which session ids are in use.
+The CHARGING package checks it under the subscriber lock (ORA-20012), before the request number is
+used up or anything is charged.
+
+**Session cache (RD-4).** `session:{id}` -> `gateway|msisdn` in Redis, kept as long as the session can
+live. A call from the wrong gateway is refused from the cache, without touching Oracle. A missing entry
+(Redis down, key gone) just means Oracle checks; the cache never allows anything on its own.
+
+**Forgotten sessions expire (CH-8).** A gateway that crashes never sends the release, and the grant's
+quota would stay held forever. `CHARGING.EXPIRE_STALE_SESSIONS` closes sessions with no update for
+65 minutes (the 1 h grant validity + 5 min): the held quota goes back to the bucket, nothing is charged
+(no usage was reported), `end_reason = EXPIRED`, and the audit gets an `EXPIRED` row. The backend calls
+it every minute (`telecom.charging.expire-sessions`); several copies may, because the procedure locks
+with `SKIP LOCKED` and never waits behind live charging.
+
+**Report-only update.** `requestedMb: 0` means "here is my usage, I need nothing more now": the usage is
+charged and the answer is `REPORTED` (REST and SOAP), with no grant and **no BLOCK**. Before group 8 it
+answered DENY and blocked the user on every gateway.
+
+`charging_session.end_reason` says how each session ended: `RELEASE`, `DENY` (nothing left at start) or
+`EXPIRED`.
+
 ## Gateway simulator
 
 `gateway-simulator/` is a separate Spring Boot command line app that plays the network gateway: it
@@ -662,6 +688,13 @@ mvn test
   nothing breaks without tracing. In the simulator, `GatewaySimulatorTest` checks a session is one
   observation (`gateway.session`).
 - The VPN demo is checked by `scripts/vpn-check.sh` against the running `docker-compose.vpn.yml`.
+- `SessionOwnershipTest`: another gateway's update and release get `404` (from the cache, and from
+  Oracle when the cache has no entry), the same answer as an unknown session, without using up a request
+  number; the cache entry and its lifetime; `end_reason`; and a 0 MB update is `REPORTED`, charged, with
+  no BLOCK.
+- `SessionExpiryTest`: a quiet session gives its quota back and charges nothing, an active one or one
+  quiet for 30 minutes is kept (the time zone check), an expired one can't be updated, and a second run
+  finds nothing new.
 - `UsageEndpointTest`: usage charging against Oracle: app packages, add-ons, splitting across buckets,
   pay as you go, fair usage throttling, quota order and plan data refill.
 

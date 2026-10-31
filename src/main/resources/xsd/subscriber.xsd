@@ -363,6 +363,7 @@
         <xs:restriction base="xs:string">
             <xs:enumeration value="ALLOW"/>
             <xs:enumeration value="DENY"/>
+            <xs:enumeration value="REPORTED"/>
         </xs:restriction>
     </xs:simpleType>
 
@@ -374,7 +375,8 @@
 
     <xs:complexType name="Grant">
         <xs:annotation>
-            <xs:documentation>ALLOW: pass grantedMb more at bandwidthKbps. DENY: grantedMb is 0, apply action.</xs:documentation>
+            <xs:documentation>ALLOW: pass grantedMb more at bandwidthKbps. DENY: grantedMb is 0, apply action.
+                REPORTED: the update asked for 0 MB; its usage is charged, nothing new is granted, no action.</xs:documentation>
         </xs:annotation>
         <xs:sequence>
             <xs:element name="sessionId" type="tns:SessionId"/>

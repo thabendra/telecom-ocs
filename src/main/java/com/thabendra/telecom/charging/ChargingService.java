@@ -3,6 +3,7 @@ package com.thabendra.telecom.charging;
 import com.thabendra.telecom.audit.AuditContext;
 import com.thabendra.telecom.monitoring.OcsMetrics;
 import com.thabendra.telecom.push.GatewayCommands;
+import com.thabendra.telecom.subscriber.NotFoundException;
 import com.thabendra.telecom.subscriber.OracleErrors;
 import com.thabendra.telecom.usage.UsageService.App;
 import io.micrometer.observation.Observation;
@@ -23,7 +24,11 @@ import java.util.function.Supplier;
 @Service
 public class ChargingService {
 
-    public enum Result { ALLOW, DENY }
+    /**
+     * ALLOW: a new grant. DENY: nothing left, block. REPORTED: the gateway asked for 0 MB (it only
+     * reported usage); the usage is charged, nothing new is granted, and nobody is blocked.
+     */
+    public enum Result { ALLOW, DENY, REPORTED }
 
     /** What the gateway must do when the result is DENY. */
     public enum Action { BLOCK }
@@ -47,14 +52,16 @@ public class ChargingService {
     private final AuditContext audit;
     private final OcsMetrics metrics;
     private final ObservationRegistry observations;
+    private final SessionCache cache;
 
     public ChargingService(ChargingSessionRepository sessions, GatewayCommands commands, AuditContext audit,
-                           OcsMetrics metrics, ObservationRegistry observations) {
+                           OcsMetrics metrics, ObservationRegistry observations, SessionCache cache) {
         this.sessions = sessions;
         this.commands = commands;
         this.audit = audit;
         this.metrics = metrics;
         this.observations = observations;
+        this.cache = cache;
     }
 
     // a DENY also queues BLOCK for every gateway (PU-1), in this same transaction
@@ -62,33 +69,51 @@ public class ChargingService {
     public Grant startSession(String msisdn, App app, long requestedMb) {
         String sessionId = UUID.randomUUID().toString();
         // the PL/SQL writes GRANT / DENY into the audit trail with the calling gateway's name (OB-1)
-        Grant grant = toGrant(sessionId, inOracle("start", () -> audit.asCaller(
+        Grant grant = toGrant(sessionId, requestedMb, inOracle("start", () -> audit.asCaller(
                 () -> call(() -> sessions.startSession(sessionId, msisdn, app.name(), requestedMb)))));
         metrics.chargingDecision("start", grant.result() == Result.ALLOW, AuditContext.callerName());
         if (grant.result() == Result.DENY) {
             commands.blockOutOfQuota(msisdn);
+        } else {
+            cache.remember(sessionId, AuditContext.callerName(), msisdn);   // RD-4
         }
         return grant;
     }
 
+    // CH-7: only the gateway that started the session may update it (checked in the cache, then in Oracle)
     @Transactional
     public Grant updateSession(String sessionId, long requestNumber, long usedMb, long requestedMb) {
-        Grant grant = toGrant(sessionId, inOracle("update", () -> audit.asCaller(
+        SessionCache.Owner owner = checkOwner(sessionId);
+        Grant grant = toGrant(sessionId, requestedMb, inOracle("update", () -> audit.asCaller(
                 () -> call(() -> sessions.updateSession(sessionId, requestNumber, usedMb, requestedMb)))));
-        if (requestedMb > 0) {   // asking for 0 MB (the last report) is no decision, as in the audit
+        if (requestedMb > 0) {   // asking for 0 MB (only reporting usage) is no decision, as in the audit
             metrics.chargingDecision("update", grant.result() == Result.ALLOW, AuditContext.callerName());
         }
         if (grant.result() == Result.DENY) {
             commands.blockOutOfQuotaForSession(sessionId);
+        } else if (owner != null) {
+            cache.remember(sessionId, owner.gateway(), owner.msisdn());   // alive again: keep it as long
         }
         return grant;
     }
 
     @Transactional
     public Release releaseSession(String sessionId, long requestNumber, long usedMb) {
-        Long totalUsedMb = inOracle("release",
-                () -> call(() -> sessions.releaseSession(sessionId, requestNumber, usedMb)));
+        checkOwner(sessionId);
+        Long totalUsedMb = inOracle("release", () -> audit.asCaller(
+                () -> call(() -> sessions.releaseSession(sessionId, requestNumber, usedMb))));
+        cache.forget(sessionId);
         return new Release(sessionId, totalUsedMb);
+    }
+
+    // RD-4: a cached owner that isn't the caller is refused at once, with the same answer as an unknown
+    // session; no cache entry means Oracle decides (lock_open_session checks the owner too)
+    private SessionCache.Owner checkOwner(String sessionId) {
+        SessionCache.Owner owner = cache.find(sessionId).orElse(null);
+        if (owner != null && !owner.gateway().equals(AuditContext.callerName())) {
+            throw new NotFoundException("Charging session " + sessionId + " not found");
+        }
+        return owner;
     }
 
     // OB-3: the CHARGING procedure as its own span in the trace, so the time spent in Oracle shows apart
@@ -108,8 +133,11 @@ public class ChargingService {
         }
     }
 
-    private static Grant toGrant(String sessionId, Map<String, Object> out) {
+    private static Grant toGrant(String sessionId, long requestedMb, Map<String, Object> out) {
         long granted = number(out, "P_GRANTED_MB").longValue();
+        if (granted == 0 && requestedMb == 0) {
+            return new Grant(sessionId, Result.REPORTED, 0, null, null, null, null, null);
+        }
         if (granted == 0) {
             return new Grant(sessionId, Result.DENY, 0, null, null, null, null, Action.BLOCK);
         }

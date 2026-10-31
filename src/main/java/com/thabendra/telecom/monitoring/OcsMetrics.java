@@ -17,6 +17,7 @@ import java.util.function.Supplier;
  *   ocs_bulkhead_rejected_total, ocs_bulkhead_free_slots        503s and free database slots (RL-4)
  *   ocs_otp_sent_total, ocs_otp_checked_total{result}           logins; many "wrong" = someone guessing
  *   ocs_push_commands{status}                                   PENDING / SENT / FAILED commands (group 5)
+ *   ocs_sessions_expired_total                                  sessions a gateway never released (CH-8)
  * </pre>
  * Tags only take values from small fixed sets (the allowed gateways, a few results), never a phone
  * number or IP: every tag value is a separate time series in Prometheus.
@@ -59,6 +60,13 @@ public class OcsMetrics {
         Gauge.builder("ocs.bulkhead.free.slots", freeSlots)
                 .description("Database slots free in this backend copy right now")
                 .register(registry);
+    }
+
+    /** CH-8: sessions closed because their gateway stopped reporting. */
+    public void sessionsExpired(int count) {
+        Counter.builder("ocs.sessions.expired")
+                .description("Charging sessions expired without a release")
+                .register(registry).increment(count);
     }
 
     public void otpSent() {
