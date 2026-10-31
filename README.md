@@ -1,12 +1,16 @@
-# Telecom Subscriber Service
+# Telecom Online Charging System (telecom-ocs)
 
-A small mobile operator backend: subscribers, plans, data packages (YouTube Unlimited, WhatsApp,
-Extra 25GB) and **usage charging** that decides which package pays for which app's traffic and what
-speed limit applies. The same business logic is exposed as a **contract first SOAP web service**
-(Spring-WS) and a **REST API**, on an **Oracle Database** with **PL/SQL stored procedures**.
+A mobile operator's **online charging system (OCS)**: the network gateway asks before it lets data
+through, gets a quota grant (MB, speed, validity) from the right bucket (YouTube Unlimited, WhatsApp,
+Extra 25GB, plan data or pay as you go), reports what was used, and is told to block the user when
+nothing is left. It also manages subscribers, plans and data packages. Everything is exposed as a
+**contract first SOAP web service** (Spring-WS) and a **REST API**, on an **Oracle Database** with
+**PL/SQL stored procedures**, and the gateway API is protected with **mTLS, OAuth2 tokens, idempotent
+retries and rate limiting**.
 
-**Stack:** Java 21 · Spring Boot 3.4 · Redis · Spring Web Services (SOAP, WSDL, XSD validation) · JAXB ·
-Spring Data JPA / Hibernate · Spring JDBC (SimpleJdbcCall) · Oracle Database Free 23ai · PL/SQL · Flyway ·
+**Stack:** Java 21 · Spring Boot 3.4 · Spring Web Services (SOAP, WSDL, XSD validation) · JAXB ·
+Spring Data JPA / Hibernate (`@Procedure`) · Oracle Database Free 23ai · PL/SQL · Flyway · Redis (Lua) ·
+Spring Security (X.509, OAuth2 resource server) · Spring Authorization Server · Resilience4j · Micrometer ·
 JUnit 5 · Mockito · Spring-WS Test · Testcontainers · Docker Compose · GitHub Actions
 
 ## Architecture

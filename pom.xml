@@ -12,10 +12,10 @@
     </parent>
 
     <groupId>com.thabendra</groupId>
-    <artifactId>telecom-subscriber-service</artifactId>
+    <artifactId>telecom-ocs</artifactId>
     <version>0.0.1-SNAPSHOT</version>
-    <name>telecom-subscriber-service</name>
-    <description>Mobile subscriber and plan service: SOAP (Spring-WS) + REST on Oracle Database</description>
+    <name>telecom-ocs</name>
+    <description>Telecom Online Charging System: real-time data charging for network gateways, SOAP (Spring-WS) + REST on Oracle Database</description>
 
     <properties>
         <java.version>21</java.version>
