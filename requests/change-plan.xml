@@ -1,0 +1,10 @@
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"
+                  xmlns:s="http://thabendra.com/telecom/subscriber">
+    <soapenv:Header/>
+    <soapenv:Body>
+        <s:ChangePlanRequest>
+            <s:msisdn>94771234567</s:msisdn>
+            <s:newPlanCode>SMART</s:newPlanCode>
+        </s:ChangePlanRequest>
+    </soapenv:Body>
+</soapenv:Envelope>

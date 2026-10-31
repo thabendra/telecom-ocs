@@ -1,0 +1,17 @@
+spring:
+  application:
+    name: telecom-subscriber-service
+  # local Oracle Database Free from docker-compose.yml (test credentials only)
+  datasource:
+    url: ${DB_URL:jdbc:oracle:thin:@localhost:1521/FREEPDB1}
+    username: ${DB_USERNAME:telecom}
+    password: ${DB_PASSWORD:telecom}
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate   # Flyway owns the schema
+  flyway:
+    enabled: true
+
+server:
+  port: 8080

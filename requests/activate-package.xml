@@ -1,0 +1,10 @@
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"
+                  xmlns:s="http://thabendra.com/telecom/subscriber">
+    <soapenv:Header/>
+    <soapenv:Body>
+        <s:ActivatePackageRequest>
+            <s:msisdn>94771234567</s:msisdn>
+            <s:packageCode>YT_UNLIMITED</s:packageCode>
+        </s:ActivatePackageRequest>
+    </soapenv:Body>
+</soapenv:Envelope>

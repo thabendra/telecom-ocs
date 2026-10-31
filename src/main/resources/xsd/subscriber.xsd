@@ -1,0 +1,337 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  SOAP contract (source of truth). Java classes are generated from this file at build time
+  and Spring-WS publishes the WSDL from it at /ws/subscribers.wsdl.
+  Every operation is a <Name>Request / <Name>Response element pair.
+-->
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+           xmlns:tns="http://thabendra.com/telecom/subscriber"
+           targetNamespace="http://thabendra.com/telecom/subscriber"
+           elementFormDefault="qualified">
+
+    <!-- ===== shared types ===== -->
+
+    <xs:simpleType name="Msisdn">
+        <xs:annotation>
+            <xs:documentation>Sri Lankan mobile number in international format without "+", e.g. 94771234567</xs:documentation>
+        </xs:annotation>
+        <xs:restriction base="xs:string">
+            <xs:pattern value="947[0-9]{8}"/>
+        </xs:restriction>
+    </xs:simpleType>
+
+    <xs:simpleType name="PlanCode">
+        <xs:restriction base="xs:string">
+            <xs:pattern value="[A-Z0-9_]{2,20}"/>
+        </xs:restriction>
+    </xs:simpleType>
+
+    <xs:simpleType name="Money">
+        <xs:restriction base="xs:decimal">
+            <xs:minInclusive value="0"/>
+            <xs:fractionDigits value="2"/>
+            <xs:totalDigits value="10"/>
+        </xs:restriction>
+    </xs:simpleType>
+
+    <xs:complexType name="Plan">
+        <xs:sequence>
+            <xs:element name="code" type="tns:PlanCode"/>
+            <xs:element name="name" type="xs:string"/>
+            <xs:element name="monthlyFee" type="tns:Money"/>
+            <xs:element name="dataGb" type="xs:int"/>
+            <xs:element name="voiceMinutes" type="xs:int"/>
+            <xs:element name="maxBandwidthKbps" type="xs:int"/>
+        </xs:sequence>
+    </xs:complexType>
+
+    <xs:simpleType name="App">
+        <xs:annotation>
+            <xs:documentation>App the network's DPI detected for the traffic. GENERAL = any other traffic.</xs:documentation>
+        </xs:annotation>
+        <xs:restriction base="xs:string">
+            <xs:enumeration value="YOUTUBE"/>
+            <xs:enumeration value="WHATSAPP"/>
+            <xs:enumeration value="FACEBOOK"/>
+            <xs:enumeration value="GENERAL"/>
+        </xs:restriction>
+    </xs:simpleType>
+
+    <xs:simpleType name="ChargeSource">
+        <xs:restriction base="xs:string">
+            <xs:enumeration value="PACKAGE"/>
+            <xs:enumeration value="PLAN"/>
+            <xs:enumeration value="BALANCE"/>
+        </xs:restriction>
+    </xs:simpleType>
+
+    <xs:complexType name="DataPackage">
+        <xs:sequence>
+            <xs:element name="code" type="tns:PlanCode"/>
+            <xs:element name="name" type="xs:string"/>
+            <xs:element name="app" type="tns:App" minOccurs="0">
+                <xs:annotation>
+                    <xs:documentation>Missing = add-on data any app can use</xs:documentation>
+                </xs:annotation>
+            </xs:element>
+            <xs:element name="price" type="tns:Money"/>
+            <xs:element name="dataMb" type="xs:long" minOccurs="0">
+                <xs:annotation>
+                    <xs:documentation>Missing = unlimited</xs:documentation>
+                </xs:annotation>
+            </xs:element>
+            <xs:element name="validityDays" type="xs:int"/>
+            <xs:element name="maxBandwidthKbps" type="xs:int"/>
+            <xs:element name="fairUsageMb" type="xs:long" minOccurs="0"/>
+            <xs:element name="throttledBandwidthKbps" type="xs:int" minOccurs="0"/>
+        </xs:sequence>
+    </xs:complexType>
+
+    <xs:complexType name="Bucket">
+        <xs:annotation>
+            <xs:documentation>One place data comes from, listed in the order usage is charged</xs:documentation>
+        </xs:annotation>
+        <xs:sequence>
+            <xs:element name="source" type="tns:ChargeSource"/>
+            <xs:element name="code" type="tns:PlanCode"/>
+            <xs:element name="name" type="xs:string"/>
+            <xs:element name="app" type="tns:App" minOccurs="0"/>
+            <xs:element name="dataMbLeft" type="xs:long" minOccurs="0">
+                <xs:annotation>
+                    <xs:documentation>Missing = unlimited</xs:documentation>
+                </xs:annotation>
+            </xs:element>
+            <xs:element name="dataMbUsed" type="xs:long"/>
+            <xs:element name="bandwidthKbps" type="xs:int"/>
+            <xs:element name="expiresAt" type="xs:dateTime" minOccurs="0"/>
+        </xs:sequence>
+    </xs:complexType>
+
+    <xs:complexType name="UsagePortion">
+        <xs:sequence>
+            <xs:element name="source" type="tns:ChargeSource"/>
+            <xs:element name="packageCode" type="tns:PlanCode" minOccurs="0"/>
+            <xs:element name="dataMb" type="xs:long"/>
+            <xs:element name="moneyCharged" type="tns:Money"/>
+        </xs:sequence>
+    </xs:complexType>
+
+    <xs:complexType name="Subscriber">
+        <xs:sequence>
+            <xs:element name="msisdn" type="tns:Msisdn"/>
+            <xs:element name="fullName" type="xs:string"/>
+            <xs:element name="nic" type="xs:string"/>
+            <xs:element name="balance" type="tns:Money"/>
+            <xs:element name="status" type="xs:string"/>
+            <xs:element name="plan" type="tns:Plan"/>
+        </xs:sequence>
+    </xs:complexType>
+
+    <!-- ===== operations ===== -->
+
+    <xs:element name="ListPlansRequest">
+        <xs:complexType>
+            <xs:sequence/>
+        </xs:complexType>
+    </xs:element>
+    <xs:element name="ListPlansResponse">
+        <xs:complexType>
+            <xs:sequence>
+                <xs:element name="plan" type="tns:Plan" minOccurs="0" maxOccurs="unbounded"/>
+            </xs:sequence>
+        </xs:complexType>
+    </xs:element>
+
+    <xs:element name="CreateSubscriberRequest">
+        <xs:complexType>
+            <xs:sequence>
+                <xs:element name="msisdn" type="tns:Msisdn"/>
+                <xs:element name="fullName">
+                    <xs:simpleType>
+                        <xs:restriction base="xs:string">
+                            <xs:minLength value="2"/>
+                            <xs:maxLength value="100"/>
+                        </xs:restriction>
+                    </xs:simpleType>
+                </xs:element>
+                <xs:element name="nic">
+                    <xs:annotation>
+                        <xs:documentation>Old (9 digits + V/X) or new (12 digits) NIC number</xs:documentation>
+                    </xs:annotation>
+                    <xs:simpleType>
+                        <xs:restriction base="xs:string">
+                            <xs:pattern value="[0-9]{9}[VvXx]|[0-9]{12}"/>
+                        </xs:restriction>
+                    </xs:simpleType>
+                </xs:element>
+                <xs:element name="planCode" type="tns:PlanCode"/>
+                <xs:element name="initialBalance" type="tns:Money" minOccurs="0"/>
+            </xs:sequence>
+        </xs:complexType>
+    </xs:element>
+    <xs:element name="CreateSubscriberResponse">
+        <xs:complexType>
+            <xs:sequence>
+                <xs:element name="subscriber" type="tns:Subscriber"/>
+            </xs:sequence>
+        </xs:complexType>
+    </xs:element>
+
+    <xs:element name="GetSubscriberRequest">
+        <xs:complexType>
+            <xs:sequence>
+                <xs:element name="msisdn" type="tns:Msisdn"/>
+            </xs:sequence>
+        </xs:complexType>
+    </xs:element>
+    <xs:element name="GetSubscriberResponse">
+        <xs:complexType>
+            <xs:sequence>
+                <xs:element name="subscriber" type="tns:Subscriber"/>
+            </xs:sequence>
+        </xs:complexType>
+    </xs:element>
+
+    <xs:element name="GetBalanceRequest">
+        <xs:complexType>
+            <xs:sequence>
+                <xs:element name="msisdn" type="tns:Msisdn"/>
+            </xs:sequence>
+        </xs:complexType>
+    </xs:element>
+    <xs:element name="GetBalanceResponse">
+        <xs:complexType>
+            <xs:sequence>
+                <xs:element name="msisdn" type="tns:Msisdn"/>
+                <xs:element name="balance" type="tns:Money"/>
+            </xs:sequence>
+        </xs:complexType>
+    </xs:element>
+
+    <xs:element name="TopUpRequest">
+        <xs:complexType>
+            <xs:sequence>
+                <xs:element name="msisdn" type="tns:Msisdn"/>
+                <xs:element name="amount">
+                    <xs:simpleType>
+                        <xs:restriction base="tns:Money">
+                            <xs:minExclusive value="0"/>
+                        </xs:restriction>
+                    </xs:simpleType>
+                </xs:element>
+            </xs:sequence>
+        </xs:complexType>
+    </xs:element>
+    <xs:element name="TopUpResponse">
+        <xs:complexType>
+            <xs:sequence>
+                <xs:element name="msisdn" type="tns:Msisdn"/>
+                <xs:element name="balance" type="tns:Money"/>
+            </xs:sequence>
+        </xs:complexType>
+    </xs:element>
+
+    <xs:element name="ChangePlanRequest">
+        <xs:complexType>
+            <xs:sequence>
+                <xs:element name="msisdn" type="tns:Msisdn"/>
+                <xs:element name="newPlanCode" type="tns:PlanCode"/>
+            </xs:sequence>
+        </xs:complexType>
+    </xs:element>
+    <xs:element name="ChangePlanResponse">
+        <xs:complexType>
+            <xs:sequence>
+                <xs:element name="subscriber" type="tns:Subscriber"/>
+            </xs:sequence>
+        </xs:complexType>
+    </xs:element>
+
+    <!-- ===== packages and usage charging ===== -->
+
+    <xs:element name="ListPackagesRequest">
+        <xs:complexType>
+            <xs:sequence/>
+        </xs:complexType>
+    </xs:element>
+    <xs:element name="ListPackagesResponse">
+        <xs:complexType>
+            <xs:sequence>
+                <xs:element name="package" type="tns:DataPackage" minOccurs="0" maxOccurs="unbounded"/>
+            </xs:sequence>
+        </xs:complexType>
+    </xs:element>
+
+    <xs:element name="ActivatePackageRequest">
+        <xs:complexType>
+            <xs:sequence>
+                <xs:element name="msisdn" type="tns:Msisdn"/>
+                <xs:element name="packageCode" type="tns:PlanCode"/>
+            </xs:sequence>
+        </xs:complexType>
+    </xs:element>
+    <xs:element name="ActivatePackageResponse">
+        <xs:complexType>
+            <xs:sequence>
+                <xs:element name="msisdn" type="tns:Msisdn"/>
+                <xs:element name="packageCode" type="tns:PlanCode"/>
+                <xs:element name="expiresAt" type="xs:dateTime"/>
+                <xs:element name="balance" type="tns:Money"/>
+            </xs:sequence>
+        </xs:complexType>
+    </xs:element>
+
+    <xs:element name="RecordUsageRequest">
+        <xs:annotation>
+            <xs:documentation>Sent after the network detected and measured the traffic for one app</xs:documentation>
+        </xs:annotation>
+        <xs:complexType>
+            <xs:sequence>
+                <xs:element name="msisdn" type="tns:Msisdn"/>
+                <xs:element name="app" type="tns:App"/>
+                <xs:element name="dataMb">
+                    <xs:simpleType>
+                        <xs:restriction base="xs:long">
+                            <xs:minInclusive value="1"/>
+                            <xs:maxInclusive value="1048576"/>
+                        </xs:restriction>
+                    </xs:simpleType>
+                </xs:element>
+            </xs:sequence>
+        </xs:complexType>
+    </xs:element>
+    <xs:element name="RecordUsageResponse">
+        <xs:complexType>
+            <xs:sequence>
+                <xs:element name="msisdn" type="tns:Msisdn"/>
+                <xs:element name="app" type="tns:App"/>
+                <xs:element name="dataMb" type="xs:long"/>
+                <xs:element name="bandwidthKbps" type="xs:int">
+                    <xs:annotation>
+                        <xs:documentation>Speed limit the network should apply to this app's traffic now</xs:documentation>
+                    </xs:annotation>
+                </xs:element>
+                <xs:element name="moneyCharged" type="tns:Money"/>
+                <xs:element name="balance" type="tns:Money"/>
+                <xs:element name="portion" type="tns:UsagePortion" maxOccurs="unbounded"/>
+            </xs:sequence>
+        </xs:complexType>
+    </xs:element>
+
+    <xs:element name="GetQuotaRequest">
+        <xs:complexType>
+            <xs:sequence>
+                <xs:element name="msisdn" type="tns:Msisdn"/>
+            </xs:sequence>
+        </xs:complexType>
+    </xs:element>
+    <xs:element name="GetQuotaResponse">
+        <xs:complexType>
+            <xs:sequence>
+                <xs:element name="msisdn" type="tns:Msisdn"/>
+                <xs:element name="balance" type="tns:Money"/>
+                <xs:element name="bucket" type="tns:Bucket" maxOccurs="unbounded"/>
+            </xs:sequence>
+        </xs:complexType>
+    </xs:element>
+</xs:schema>

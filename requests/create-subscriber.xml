@@ -1,0 +1,13 @@
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"
+                  xmlns:s="http://thabendra.com/telecom/subscriber">
+    <soapenv:Header/>
+    <soapenv:Body>
+        <s:CreateSubscriberRequest>
+            <s:msisdn>94771234567</s:msisdn>
+            <s:fullName>Kamal Perera</s:fullName>
+            <s:nic>200012345678</s:nic>
+            <s:planCode>BASIC</s:planCode>
+            <s:initialBalance>1500.00</s:initialBalance>
+        </s:CreateSubscriberRequest>
+    </soapenv:Body>
+</soapenv:Envelope>

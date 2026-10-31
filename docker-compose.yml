@@ -1,0 +1,21 @@
+# Local Oracle Database Free 23ai. First start takes ~1 minute; the app user "telecom" is created automatically.
+# Passwords here are local test values only.
+services:
+  oracle:
+    image: gvenzl/oracle-free:23-slim-faststart
+    ports:
+      - "1521:1521"
+    environment:
+      ORACLE_PASSWORD: oracle
+      APP_USER: telecom
+      APP_USER_PASSWORD: telecom
+    volumes:
+      - oracle-data:/opt/oracle/oradata
+    healthcheck:
+      test: ["CMD", "healthcheck.sh"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  oracle-data:

@@ -1,0 +1,11 @@
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"
+                  xmlns:s="http://thabendra.com/telecom/subscriber">
+    <soapenv:Header/>
+    <soapenv:Body>
+        <s:RecordUsageRequest>
+            <s:msisdn>94771234567</s:msisdn>
+            <s:app>YOUTUBE</s:app>
+            <s:dataMb>300</s:dataMb>
+        </s:RecordUsageRequest>
+    </soapenv:Body>
+</soapenv:Envelope>
