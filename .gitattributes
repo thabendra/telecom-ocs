@@ -1,0 +1,5 @@
+# Files read by Linux tools (bash, redis-server in a container) must keep LF line endings, also on a
+# Windows checkout with core.autocrlf=true: a CR at the end of a line breaks a script, and in the ACL
+# file it would become part of the password.
+*.sh text eol=lf
+*.acl text eol=lf
