@@ -1,6 +1,7 @@
 package com.thabendra.gatewaysim;
 
 import java.time.Duration;
+import java.util.concurrent.CancellationException;
 
 /**
  * A charging call that didn't give an answer, in protocol neutral terms, so the retry policy works
@@ -24,8 +25,15 @@ public class BackendCallException extends RuntimeException {
         this.retryAfter = retryAfter;
     }
 
+    /**
+     * No HTTP answer: connection refused or reset, or the per-try timeout (RT-8) ran out. The JDK HTTP
+     * client reports that timeout as a CancellationException rather than an I/O error, so the clients
+     * catch both; either way it is retried like any lost answer.
+     */
     public static BackendCallException noAnswer(Throwable cause) {
-        return new BackendCallException(NO_ANSWER, null, "No answer from backend: " + cause.getMessage(), cause);
+        String why = cause instanceof CancellationException
+                ? "timed out" : cause.getMessage();
+        return new BackendCallException(NO_ANSWER, null, "No answer from backend: " + why, cause);
     }
 
     public int status() {

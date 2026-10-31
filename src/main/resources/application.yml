@@ -90,6 +90,15 @@ management:
         http.server.requests: true
       slo:
         http.server.requests: 50ms, 100ms, 200ms, 500ms
+  # OB-3: a gateway's traceparent header is continued, so one trace shows the gateway's call and
+  # everything the backend did for it; spans go to Jaeger over OTLP (docker-compose.yml)
+  tracing:
+    enabled: ${TRACING_ENABLED:true}
+    sampling:
+      probability: ${TRACING_SAMPLING:1.0}   # every request locally; in production e.g. 0.05
+  otlp:
+    tracing:
+      endpoint: ${OTLP_TRACING_ENDPOINT:http://localhost:4318/v1/traces}
 
 telecom:
   public-port: ${PUBLIC_PORT:8080}

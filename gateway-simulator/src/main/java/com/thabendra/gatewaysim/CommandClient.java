@@ -7,6 +7,7 @@ import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientResponseException;
 
 import java.util.List;
+import java.util.concurrent.CancellationException;
 import java.util.function.Supplier;
 
 /**
@@ -48,7 +49,7 @@ public class CommandClient {
     private static <T> T call(Supplier<T> request) {
         try {
             return request.get();
-        } catch (ResourceAccessException e) {
+        } catch (ResourceAccessException | CancellationException e) {   // CancellationException: see noAnswer
             throw BackendCallException.noAnswer(e);
         } catch (RestClientResponseException e) {
             HttpHeaders headers = e.getResponseHeaders();

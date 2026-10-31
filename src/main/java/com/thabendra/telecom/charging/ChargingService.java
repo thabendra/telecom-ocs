@@ -5,6 +5,8 @@ import com.thabendra.telecom.monitoring.OcsMetrics;
 import com.thabendra.telecom.push.GatewayCommands;
 import com.thabendra.telecom.subscriber.OracleErrors;
 import com.thabendra.telecom.usage.UsageService.App;
+import io.micrometer.observation.Observation;
+import io.micrometer.observation.ObservationRegistry;
 import org.springframework.dao.DataAccessException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -44,13 +46,15 @@ public class ChargingService {
     private final GatewayCommands commands;
     private final AuditContext audit;
     private final OcsMetrics metrics;
+    private final ObservationRegistry observations;
 
     public ChargingService(ChargingSessionRepository sessions, GatewayCommands commands, AuditContext audit,
-                           OcsMetrics metrics) {
+                           OcsMetrics metrics, ObservationRegistry observations) {
         this.sessions = sessions;
         this.commands = commands;
         this.audit = audit;
         this.metrics = metrics;
+        this.observations = observations;
     }
 
     // a DENY also queues BLOCK for every gateway (PU-1), in this same transaction
@@ -58,8 +62,8 @@ public class ChargingService {
     public Grant startSession(String msisdn, App app, long requestedMb) {
         String sessionId = UUID.randomUUID().toString();
         // the PL/SQL writes GRANT / DENY into the audit trail with the calling gateway's name (OB-1)
-        Grant grant = toGrant(sessionId, audit.asCaller(
-                () -> call(() -> sessions.startSession(sessionId, msisdn, app.name(), requestedMb))));
+        Grant grant = toGrant(sessionId, inOracle("start", () -> audit.asCaller(
+                () -> call(() -> sessions.startSession(sessionId, msisdn, app.name(), requestedMb)))));
         metrics.chargingDecision("start", grant.result() == Result.ALLOW, AuditContext.callerName());
         if (grant.result() == Result.DENY) {
             commands.blockOutOfQuota(msisdn);
@@ -69,8 +73,8 @@ public class ChargingService {
 
     @Transactional
     public Grant updateSession(String sessionId, long requestNumber, long usedMb, long requestedMb) {
-        Grant grant = toGrant(sessionId, audit.asCaller(
-                () -> call(() -> sessions.updateSession(sessionId, requestNumber, usedMb, requestedMb))));
+        Grant grant = toGrant(sessionId, inOracle("update", () -> audit.asCaller(
+                () -> call(() -> sessions.updateSession(sessionId, requestNumber, usedMb, requestedMb)))));
         if (requestedMb > 0) {   // asking for 0 MB (the last report) is no decision, as in the audit
             metrics.chargingDecision("update", grant.result() == Result.ALLOW, AuditContext.callerName());
         }
@@ -82,8 +86,17 @@ public class ChargingService {
 
     @Transactional
     public Release releaseSession(String sessionId, long requestNumber, long usedMb) {
-        Long totalUsedMb = call(() -> sessions.releaseSession(sessionId, requestNumber, usedMb));
+        Long totalUsedMb = inOracle("release",
+                () -> call(() -> sessions.releaseSession(sessionId, requestNumber, usedMb)));
         return new Release(sessionId, totalUsedMb);
+    }
+
+    // OB-3: the CHARGING procedure as its own span in the trace, so the time spent in Oracle shows apart
+    private <T> T inOracle(String operation, Supplier<T> procedure) {
+        return Observation.createNotStarted("ocs.charging.oracle", observations)
+                .contextualName("CHARGING." + operation + "_session")
+                .lowCardinalityKeyValue("operation", operation)
+                .observe(procedure);
     }
 
     // the repository proxy turns JPA errors into DataAccessException; map the ORA-200xx codes to domain errors

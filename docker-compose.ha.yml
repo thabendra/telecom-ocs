@@ -1,0 +1,117 @@
+# RD-7: Redis high availability to try locally. One primary, two replicas, three Sentinels, all with
+# TLS and the ACL users of docker/redis/users.acl (RD-9), and the backend in a container using them
+# through the "redis-sentinel" profile. (The everyday docker-compose.yml keeps one Redis.)
+#
+#   scripts/generate-dev-certs.sh && mvn -DskipTests package
+#   docker compose -f docker-compose.ha.yml up -d --build
+#   curl -s localhost:8081/actuator/health          Redis UP
+#   docker compose -f docker-compose.ha.yml pause redis     the primary hangs (like a crash)
+#   docker compose -f docker-compose.ha.yml logs redis-sentinel-1 | grep switch-master   about 5 s later
+#   curl -s localhost:8081/actuator/health          Redis UP again, now on the promoted replica
+#   docker compose -f docker-compose.ha.yml unpause redis   ~10 s later Sentinel makes it a replica of the new one
+#
+# Use pause, not stop: a stopped container loses its DNS name, and Sentinel goes into TILT mode (no
+# failovers) when a name it watches doesn't resolve. A real crashed server keeps its name.
+#
+# A replica can be a moment behind the primary, so a failover may lose the last few writes (an
+# idempotency key, a few rate limit tokens). That is accepted: Oracle is the source of truth, and the
+# charging_request table catches a retried charge the lost key would have caught (group 1).
+# Passwords are local test values only.
+
+name: telecom-ocs-ha    # its own project: never touches the containers of docker-compose.yml
+
+x-redis-tls: &redis-tls
+  image: redis:7.4-alpine
+  volumes:
+    - ./certs/redis.pem:/tls/redis.pem:ro
+    - ./certs/redis-key.pem:/tls/redis-key.pem:ro
+    - ./certs/ca.pem:/tls/ca.pem:ro
+    - ./docker/redis/users.acl:/etc/redis/users.acl:ro
+
+x-sentinel: &sentinel
+  image: redis:7.4-alpine
+  depends_on: [redis, redis-replica-1, redis-replica-2]
+  volumes:
+    - ./certs/redis.pem:/tls/redis.pem:ro
+    - ./certs/redis-key.pem:/tls/redis-key.pem:ro
+    - ./certs/ca.pem:/tls/ca.pem:ro
+    - ./docker/redis/sentinel.conf:/conf/sentinel.conf:ro
+
+services:
+  oracle:
+    image: gvenzl/oracle-free:23-slim-faststart
+    environment:
+      ORACLE_PASSWORD: oracle
+      APP_USER: telecom
+      APP_USER_PASSWORD: telecom
+    healthcheck:
+      test: ["CMD", "healthcheck.sh"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
+  # the first primary; masteruser / masterauth too, because after a failover it comes back as a replica
+  redis:
+    <<: *redis-tls
+    command: >-
+      sh -c "exec redis-server --port 0 --tls-port 6379
+      --tls-cert-file /tls/redis.pem --tls-key-file /tls/redis-key.pem --tls-ca-cert-file /tls/ca.pem
+      --tls-auth-clients no --tls-replication yes --aclfile /etc/redis/users.acl
+      --masteruser replica --masterauth dev-only-replica-password
+      --replica-announce-ip redis"
+
+  redis-replica-1:
+    <<: *redis-tls
+    # announce the host name, not the container IP, so Sentinel hands out a name the certificate has
+    command: >-
+      sh -c "exec redis-server --port 0 --tls-port 6379
+      --tls-cert-file /tls/redis.pem --tls-key-file /tls/redis-key.pem --tls-ca-cert-file /tls/ca.pem
+      --tls-auth-clients no --tls-replication yes --aclfile /etc/redis/users.acl
+      --masteruser replica --masterauth dev-only-replica-password
+      --replicaof redis 6379 --replica-announce-ip redis-replica-1"
+
+  redis-replica-2:
+    <<: *redis-tls
+    command: >-
+      sh -c "exec redis-server --port 0 --tls-port 6379
+      --tls-cert-file /tls/redis.pem --tls-key-file /tls/redis-key.pem --tls-ca-cert-file /tls/ca.pem
+      --tls-auth-clients no --tls-replication yes --aclfile /etc/redis/users.acl
+      --masteruser replica --masterauth dev-only-replica-password
+      --replicaof redis 6379 --replica-announce-ip redis-replica-2"
+
+  redis-sentinel-1:
+    <<: *sentinel
+    command: >-
+      sh -c "cp /conf/sentinel.conf /data/sentinel.conf
+      && echo 'sentinel announce-ip redis-sentinel-1' >> /data/sentinel.conf
+      && exec redis-sentinel /data/sentinel.conf"
+
+  redis-sentinel-2:
+    <<: *sentinel
+    command: >-
+      sh -c "cp /conf/sentinel.conf /data/sentinel.conf
+      && echo 'sentinel announce-ip redis-sentinel-2' >> /data/sentinel.conf
+      && exec redis-sentinel /data/sentinel.conf"
+
+  redis-sentinel-3:
+    <<: *sentinel
+    command: >-
+      sh -c "cp /conf/sentinel.conf /data/sentinel.conf
+      && echo 'sentinel announce-ip redis-sentinel-3' >> /data/sentinel.conf
+      && exec redis-sentinel /data/sentinel.conf"
+
+  backend:
+    build: .
+    depends_on:
+      oracle:
+        condition: service_healthy
+      redis-sentinel-1:
+        condition: service_started
+    environment:
+      SPRING_PROFILES_ACTIVE: redis-sentinel
+      DB_URL: jdbc:oracle:thin:@oracle:1521/FREEPDB1
+      TRACING_ENABLED: "false"
+    volumes:
+      - ./certs:/certs:ro
+    ports:
+      - "127.0.0.1:8081:8081"   # health and metrics, to watch the failover

@@ -10,6 +10,7 @@ import org.springframework.web.client.RestClient;
 
 import java.net.ConnectException;
 import java.time.Duration;
+import java.util.concurrent.CancellationException;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -40,6 +41,19 @@ class RestChargingClientTest {
         builder = RestClient.builder();
         backend = MockRestServiceServer.bindTo(builder).build();
         client = new RestChargingClient(builder, "http://backend", "pgw-test-01");
+    }
+
+    @Test
+    void aTimeoutIsNoAnswerSoItIsRetried() {   // the JDK client's per-try timeout comes as a CancellationException
+        backend.expect(requestTo(START)).andRespond(request -> {
+            throw new CancellationException();
+        });
+
+        assertThatThrownBy(() -> client.start("key-1", "94771234567", "YOUTUBE", 100))
+                .isInstanceOfSatisfying(BackendCallException.class, e -> {
+                    assertThat(e.status()).isEqualTo(BackendCallException.NO_ANSWER);
+                    assertThat(e.getMessage()).contains("timed out");
+                });
     }
 
     @Test

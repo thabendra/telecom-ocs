@@ -6,6 +6,8 @@ import org.springframework.core.Ordered;
 /**
  * The order every request passes the servlet filters in (lower runs first):
  * <pre>
+ *   (observation)       starts / continues the trace           (OB-3, Spring's own filter)
+ *   TraceIdFilter       X-Trace-Id on every answer               (OB-3)
  *   PortRuleFilter      right door for this API?              404
  *   Spring Security     who is calling? (certificate / token) 401 / 403
  *   RateLimitFilter     token left for this gateway?          429   (RL-1, RL-2)
@@ -19,6 +21,8 @@ import org.springframework.core.Ordered;
  */
 public final class FilterOrder {
 
+    // after Spring's ServerHttpObservationFilter (HIGHEST_PRECEDENCE + 1), which opens the span
+    public static final int TRACE_ID = Ordered.HIGHEST_PRECEDENCE + 5;
     public static final int PORT_RULE = Ordered.HIGHEST_PRECEDENCE + 10;
     public static final int RATE_LIMIT = SecurityProperties.DEFAULT_FILTER_ORDER + 10;
     public static final int IDEMPOTENCY = SecurityProperties.DEFAULT_FILTER_ORDER + 20;

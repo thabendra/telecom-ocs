@@ -1,6 +1,8 @@
 package com.thabendra.gatewaysim;
 
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import io.micrometer.observation.tck.TestObservationRegistry;
+import io.micrometer.observation.tck.TestObservationRegistryAssert;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpHeaders;
@@ -65,6 +67,24 @@ class GatewaySimulatorTest {
         assertThat(outcome.updates()).isEqualTo(2);
         assertThat(outcome.totalUsedMb()).isEqualTo(237);
         assertThat(keys).hasSize(4);   // a different Idempotency-Key for every request
+    }
+
+    @Test
+    void theWholeSessionIsOneTrace() {   // OB-3: every call of the session is inside this observation
+        expect(START, ALLOW_100, false);
+        expect(RELEASE, released(37), false);
+        TestObservationRegistry observations = TestObservationRegistry.create();
+
+        new GatewaySimulator(chargingClient(SimulatorProperties.Protocol.REST, 0, false),
+                properties(0, false, SimulatorProperties.Protocol.REST), observations).run();
+
+        backend.verify();
+        TestObservationRegistryAssert.assertThat(observations)
+                .hasObservationWithNameEqualTo("gateway.session").that()
+                .hasBeenStarted()
+                .hasBeenStopped()
+                .hasLowCardinalityKeyValue("protocol", "REST")
+                .hasLowCardinalityKeyValue("app", "YOUTUBE");
     }
 
     @Test
@@ -154,11 +174,21 @@ class GatewaySimulatorTest {
 
     // built the same way as the app: ChargingClients picks the protocol, the simulator only sees the interface
     private GatewaySimulator simulator(int maxUpdates, boolean replay, SimulatorProperties.Protocol protocol) {
-        SimulatorProperties props = new SimulatorProperties("http://backend", "pgw-test-01", protocol,
-                "94771234567", "YOUTUBE", 100, maxUpdates, 100, 37, replay, RetryPolicy.defaults());
+        return new GatewaySimulator(chargingClient(protocol, maxUpdates, replay),
+                properties(maxUpdates, replay, protocol));
+    }
+
+    private ChargingClient chargingClient(SimulatorProperties.Protocol protocol, int maxUpdates, boolean replay) {
+        SimulatorProperties props = properties(maxUpdates, replay, protocol);
         RetryingCaller caller = new RetryingCaller(props.retry(), wait -> { }, Clock.systemUTC(),
                 new SimpleMeterRegistry());
-        return new GatewaySimulator(ChargingClients.create(props, builder, caller), props);
+        return ChargingClients.create(props, builder, caller);
+    }
+
+    private static SimulatorProperties properties(int maxUpdates, boolean replay,
+                                                  SimulatorProperties.Protocol protocol) {
+        return new SimulatorProperties("http://backend", "pgw-test-01", protocol,
+                "94771234567", "YOUTUBE", 100, maxUpdates, 100, 37, replay, RetryPolicy.defaults());
     }
 
     private void expectSoap(String operation, String responsePayload, String... mustContain) {

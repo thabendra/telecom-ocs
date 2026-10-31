@@ -15,6 +15,7 @@ import javax.xml.XMLConstants;
 import javax.xml.parsers.DocumentBuilderFactory;
 import java.io.StringReader;
 import java.nio.charset.StandardCharsets;
+import java.util.concurrent.CancellationException;
 
 /**
  * Charging over the backend's SOAP API (POST /ws, StartSession / UpdateSession / ReleaseSession).
@@ -99,7 +100,7 @@ public class SoapChargingClient implements ChargingClient {
                     .toEntity(String.class);
             return new SoapAnswer(bodyContent(response.getBody()),
                     "true".equals(response.getHeaders().getFirst("Idempotent-Replayed")));
-        } catch (ResourceAccessException e) {
+        } catch (ResourceAccessException | CancellationException e) {   // CancellationException: see noAnswer
             throw BackendCallException.noAnswer(e);
         } catch (RestClientResponseException e) {
             int status = e.getStatusCode().value();

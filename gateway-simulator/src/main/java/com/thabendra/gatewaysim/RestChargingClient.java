@@ -8,6 +8,7 @@ import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientResponseException;
 
 import java.util.Map;
+import java.util.concurrent.CancellationException;
 
 /**
  * Charging over the backend's REST API (/charging/v1/sessions). Every request carries its
@@ -64,7 +65,7 @@ public class RestChargingClient implements ChargingClient {
                     .toEntity(type);
             HttpHeaders headers = response.getHeaders();
             return new Answer<>(response.getBody(), "true".equals(headers.getFirst("Idempotent-Replayed")));
-        } catch (ResourceAccessException e) {
+        } catch (ResourceAccessException | CancellationException e) {   // CancellationException: see noAnswer
             throw BackendCallException.noAnswer(e);
         } catch (RestClientResponseException e) {
             int status = e.getStatusCode().value();

@@ -1,0 +1,12 @@
+# RD-7, profile "redis-sentinel": Redis with replicas behind three Sentinels (docker-compose.ha.yml, or a
+# managed Redis in production). The backend asks a Sentinel where the primary is, and asks again after
+# a failover, so a dead primary costs a few seconds instead of an outage. host / port are not used.
+# Still TLS + the backend's ACL user (RD-9) towards the Redis servers.
+spring:
+  data:
+    redis:
+      sentinel:
+        master: ${REDIS_SENTINEL_MASTER:ocs}
+        nodes: ${REDIS_SENTINEL_NODES:redis-sentinel-1:26379,redis-sentinel-2:26379,redis-sentinel-3:26379}
+        username: ${REDIS_SENTINEL_USERNAME:telecom-ocs}
+        password: ${REDIS_SENTINEL_PASSWORD:dev-only-sentinel-client-password}

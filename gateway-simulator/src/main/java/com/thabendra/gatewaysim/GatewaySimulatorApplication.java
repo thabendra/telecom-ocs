@@ -2,6 +2,7 @@ package com.thabendra.gatewaysim;
 
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import io.micrometer.observation.ObservationRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -36,7 +37,7 @@ public class GatewaySimulatorApplication {
         SpringApplication.run(GatewaySimulatorApplication.class, args);
     }
 
-    // a command line app has no actuator, so keep the counters in memory and print them at the end
+    // a command line app with no metrics endpoint: keep the counters in memory and print them at the end
     @Bean
     MeterRegistry meterRegistry() {
         return new SimpleMeterRegistry();
@@ -58,13 +59,14 @@ public class GatewaySimulatorApplication {
 
     // SE-2: client credentials from the token server; without simulator.token.url no token is sent
     @Bean
-    AccessTokens accessTokens(ClientHttpRequestFactory gatewayHttp, SimulatorProperties props,
+    AccessTokens accessTokens(RestClient.Builder builder, ClientHttpRequestFactory gatewayHttp,
+                              SimulatorProperties props,
                               @Value("${simulator.token.url:}") String tokenUrl,
                               @Value("${simulator.token.scope:charging:write notify:read}") String scope) {
         if (tokenUrl.isBlank()) {
             return AccessTokens.NONE;
         }
-        return new TokenClient(RestClient.builder().requestFactory(gatewayHttp).build(), tokenUrl, props.clientId(),
+        return new TokenClient(builder.requestFactory(gatewayHttp).build(), tokenUrl, props.clientId(),
                 scope, Clock.systemUTC());
     }
 
@@ -76,15 +78,16 @@ public class GatewaySimulatorApplication {
     }
 
     @Bean
-    GatewaySimulator gatewaySimulator(ChargingClient client, SimulatorProperties props) {
-        return new GatewaySimulator(client, props);
+    GatewaySimulator gatewaySimulator(ChargingClient client, SimulatorProperties props,
+                                      ObservationRegistry observations) {
+        return new GatewaySimulator(client, props, observations);
     }
 
     // PU-3: poll the backend's push channel for BLOCK / UNBLOCK commands (REST, same connection and token)
     @Bean
-    CommandPoller commandPoller(ClientHttpRequestFactory gatewayHttp, SimulatorProperties props,
-                                RetryingCaller caller, AccessTokens accessTokens) {
-        return new CommandPoller(new CommandClient(RestClient.builder().requestFactory(gatewayHttp),
+    CommandPoller commandPoller(RestClient.Builder builder, ClientHttpRequestFactory gatewayHttp,
+                                SimulatorProperties props, RetryingCaller caller, AccessTokens accessTokens) {
+        return new CommandPoller(new CommandClient(builder.requestFactory(gatewayHttp),
                 props.backendUrl(), accessTokens), caller);
     }
 

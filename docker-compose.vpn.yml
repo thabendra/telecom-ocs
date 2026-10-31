@@ -1,0 +1,149 @@
+# VP-4: the operator's network and ours on one laptop, joined only by a WireGuard tunnel (standing in
+# for the production IPsec VPN, docs/vpn-design.md). Nothing of the backend network is published on
+# the host; the gateway simulator can reach the backend only through the tunnel, and the firewall on
+# our VPN router lets only the gateway API (8443) and the token server (9443) through.
+#
+#   operator-net 172.30.1.0/24      transit-net 172.30.0.0/24 ("the internet")   backend-net 172.30.2.0/24
+#   simulator ── wg-operator 10.99.0.1 ═══════ WireGuard, UDP 51820 ═══════ wg-backend 10.99.0.2 ── backend, token server,
+#                                                                            (firewall)          Oracle, Redis
+#
+#   scripts/generate-dev-certs.sh
+#   mvn -DskipTests package && mvn -f token-server/pom.xml -DskipTests package
+#   mvn -f gateway-simulator/pom.xml -DskipTests package
+#   docker compose -f docker-compose.vpn.yml up -d --build      (Oracle needs about a minute)
+#   scripts/vpn-check.sh                                          the checks below, in one go
+#   docker compose -f docker-compose.vpn.yml run --rm simulator  one charging session through the tunnel
+#
+# The simulator shares wg-operator's network stack (like a gateway whose route to us is the VPN
+# router), so its only way to 172.30.2.0/24 is wg0. Passwords and keys are local test values only.
+
+name: telecom-ocs-vpn   # its own project: never touches the containers of docker-compose.yml
+
+x-wireguard: &wireguard
+  build: docker/wireguard
+  cap_add: [NET_ADMIN]
+  volumes:
+    - wireguard-keys:/keys:ro
+  depends_on:
+    wg-keys:
+      condition: service_completed_successfully
+  entrypoint: ["/usr/local/bin/peer.sh"]
+
+services:
+  # makes the tunnel's keys once (kept in the wireguard-keys volume)
+  wg-keys:
+    build: docker/wireguard
+    volumes:
+      - wireguard-keys:/keys
+    entrypoint: ["/usr/local/bin/keys.sh"]
+
+  # --- the operator's site ---------------------------------------------------------------------
+  wg-operator:
+    <<: *wireguard
+    environment:
+      SIDE: operator
+      PEER: backend
+      TUNNEL_IP: 10.99.0.1
+      PEER_TUNNEL_IP: 10.99.0.2
+      REMOTE_SUBNET: 172.30.2.0/24
+      PEER_ENDPOINT: 172.30.0.3:51820
+    networks:
+      transit-net: { ipv4_address: 172.30.0.2 }
+      operator-net: { ipv4_address: 172.30.1.2 }
+
+  simulator:
+    build: gateway-simulator
+    network_mode: service:wg-operator
+    depends_on: [wg-operator, backend]
+    profiles: [run]     # started on demand: docker compose -f docker-compose.vpn.yml run --rm simulator
+    environment:
+      SIMULATOR_BACKENDURL: https://172.30.2.10:8443
+      TOKEN_URL: https://172.30.2.11:9443/oauth2/token
+      TRACING_ENABLED: "false"
+    volumes:
+      - ./certs:/certs:ro
+
+  # --- our site --------------------------------------------------------------------------------
+  wg-backend:
+    <<: *wireguard
+    sysctls:
+      net.ipv4.ip_forward: "1"
+    environment:
+      SIDE: backend
+      PEER: operator
+      TUNNEL_IP: 10.99.0.2
+      PEER_TUNNEL_IP: 10.99.0.1
+      REMOTE_SUBNET: 172.30.1.0/24
+      LOCAL_SUBNET: 172.30.2.0/24
+      BACKEND_IP: 172.30.2.10
+      TOKEN_SERVER_IP: 172.30.2.11
+    networks:
+      transit-net: { ipv4_address: 172.30.0.3 }
+      backend-net: { ipv4_address: 172.30.2.2 }
+
+  backend:
+    build: .
+    depends_on:
+      oracle:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    environment:
+      DB_URL: jdbc:oracle:thin:@oracle:1521/FREEPDB1
+      REDIS_HOST: redis
+      TOKEN_ISSUER: https://172.30.2.11:9443
+      TOKEN_JWKS_URI: https://172.30.2.11:9443/oauth2/jwks
+      TRACING_ENABLED: "false"
+    volumes:
+      - ./certs:/certs:ro
+    networks:
+      backend-net: { ipv4_address: 172.30.2.10 }
+
+  token-server:
+    build: token-server
+    environment:
+      TOKEN_ISSUER: https://172.30.2.11:9443
+    volumes:
+      - ./certs:/certs:ro
+    networks:
+      backend-net: { ipv4_address: 172.30.2.11 }
+
+  oracle:
+    image: gvenzl/oracle-free:23-slim-faststart
+    environment:
+      ORACLE_PASSWORD: oracle
+      APP_USER: telecom
+      APP_USER_PASSWORD: telecom
+    healthcheck:
+      test: ["CMD", "healthcheck.sh"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+    networks:
+      backend-net: { ipv4_address: 172.30.2.20 }
+
+  redis:
+    image: redis:7.4-alpine
+    command: >
+      redis-server --port 0 --tls-port 6379
+      --tls-cert-file /tls/redis.pem --tls-key-file /tls/redis-key.pem --tls-ca-cert-file /tls/ca.pem
+      --tls-auth-clients no --aclfile /etc/redis/users.acl
+    volumes:
+      - ./certs/redis.pem:/tls/redis.pem:ro
+      - ./certs/redis-key.pem:/tls/redis-key.pem:ro
+      - ./certs/ca.pem:/tls/ca.pem:ro
+      - ./docker/redis/users.acl:/etc/redis/users.acl:ro
+    networks:
+      backend-net: { ipv4_address: 172.30.2.21 }
+
+networks:
+  operator-net:
+    ipam: { config: [{ subnet: 172.30.1.0/24 }] }
+  transit-net:
+    ipam: { config: [{ subnet: 172.30.0.0/24 }] }
+  backend-net:
+    internal: true      # no way out to the internet, and no published ports
+    ipam: { config: [{ subnet: 172.30.2.0/24 }] }
+
+volumes:
+  wireguard-keys:

@@ -1,4 +1,4 @@
-# Local Oracle Database Free 23ai + Redis + Keycloak + Prometheus + Grafana. Oracle's first start takes ~1 minute; the app user "telecom" is created automatically.
+# Local Oracle Database Free 23ai + Redis + Keycloak + Prometheus + Grafana + Jaeger. Oracle's first start takes ~1 minute; the app user "telecom" is created automatically.
 # Passwords here are local test values only.
 services:
   oracle:
@@ -63,6 +63,16 @@ services:
       - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
     extra_hosts:
       - "host.docker.internal:host-gateway"
+
+  # OB-3: traces from the backend and the gateway simulator (OTLP over HTTP on 4318);
+  # UI at http://localhost:16686
+  jaeger:
+    image: jaegertracing/all-in-one:1.62.0
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    ports:
+      - "127.0.0.1:16686:16686"
+      - "127.0.0.1:4318:4318"
 
   grafana:
     image: grafana/grafana:11.3.1

@@ -3,8 +3,11 @@ package com.thabendra.gatewaysim;
 import com.thabendra.gatewaysim.ChargingClient.Answer;
 import com.thabendra.gatewaysim.ChargingClient.Grant;
 import com.thabendra.gatewaysim.ChargingClient.Release;
+import io.micrometer.observation.Observation;
+import io.micrometer.observation.ObservationRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
 
 import java.util.function.Supplier;
 
@@ -30,20 +33,38 @@ public class GatewaySimulator {
 
     private final ChargingClient client;
     private final SimulatorProperties props;
+    private final ObservationRegistry observations;
 
     public GatewaySimulator(ChargingClient client, SimulatorProperties props) {
-        this.client = client;
-        this.props = props;
+        this(client, props, ObservationRegistry.NOOP);
     }
 
+    public GatewaySimulator(ChargingClient client, SimulatorProperties props, ObservationRegistry observations) {
+        this.client = client;
+        this.props = props;
+        this.observations = observations;
+    }
+
+    // OB-3: the whole session is one trace; every call inside it (retries too) is a child span, and the
+    // backend continues the same trace from the traceparent header
     public Outcome run() {
-        try {
-            return runSession();
-        } catch (FailOpenException e) {
-            log.warn("FAIL OPEN: {}; letting {}'s traffic through and charging it later", e.getMessage(),
-                    props.msisdn());
-            return new Outcome(null, false, 0, 0, true);
-        }
+        return Observation.createNotStarted("gateway.session", observations)
+                .contextualName("charging session " + props.app())
+                .lowCardinalityKeyValue("protocol", String.valueOf(props.protocol()))
+                .lowCardinalityKeyValue("app", String.valueOf(props.app()))
+                .observe(() -> {
+                    String traceId = MDC.get("traceId");
+                    if (traceId != null) {
+                        log.info("TRACE  {} (Jaeger: http://localhost:16686/trace/{})", traceId, traceId);
+                    }
+                    try {
+                        return runSession();
+                    } catch (FailOpenException e) {
+                        log.warn("FAIL OPEN: {}; letting {}'s traffic through and charging it later", e.getMessage(),
+                                props.msisdn());
+                        return new Outcome(null, false, 0, 0, true);
+                    }
+                });
     }
 
     private Outcome runSession() {

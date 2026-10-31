@@ -67,6 +67,18 @@ class CommandPollerTest {
     }
 
     @Test
+    void aFailedPollIsTriedAgainNextTimeNotACrash() {   // the backend keeps the commands (PU-4)
+        for (int i = 0; i < 4; i++) {   // the first try and 3 retries
+            expectPoll(withStatus(HttpStatus.SERVICE_UNAVAILABLE));
+        }
+
+        CommandPoller.Result result = poller.pollOnce();
+
+        backend.verify();
+        assertThat(result).isEqualTo(new CommandPoller.Result(0, 0, 0));
+    }
+
+    @Test
     void blockStopsTheUsersTraffic() {
         expectPoll(json("[" + BLOCK + "]"));
         expectAck("c-1", withNoContent());

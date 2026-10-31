@@ -3,3 +3,5 @@
 # file it would become part of the password.
 *.sh text eol=lf
 *.acl text eol=lf
+Dockerfile text eol=lf
+*.conf text eol=lf

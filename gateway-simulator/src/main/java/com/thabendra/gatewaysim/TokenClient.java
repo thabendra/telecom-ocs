@@ -12,6 +12,7 @@ import org.springframework.web.client.RestClientResponseException;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.concurrent.CancellationException;
 
 /**
  * Gets access tokens from the token server with the OAuth2 client credentials grant (SE-2). The HTTP
@@ -76,7 +77,7 @@ public class TokenClient implements AccessTokens {
                 throw new BackendCallException(502, null, "Token server sent no access_token", null);
             }
             return response;
-        } catch (ResourceAccessException e) {
+        } catch (ResourceAccessException | CancellationException e) {   // CancellationException: see noAnswer
             throw BackendCallException.noAnswer(e);
         } catch (RestClientResponseException e) {
             HttpHeaders headers = e.getResponseHeaders();

@@ -4,6 +4,7 @@ import com.thabendra.gatewaysim.CommandClient.Command;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -37,7 +38,14 @@ public class CommandPoller {
     }
 
     public Result pollOnce() {
-        var commands = caller.call(client::poll);
+        List<Command> commands;
+        try {
+            commands = caller.call(client::poll);
+        } catch (RuntimeException pollFailed) {
+            // nothing is lost: the commands stay in the backend's outbox until a poll gets them (PU-4)
+            log.warn("POLL failed ({}); the commands wait in the backend for the next poll", pollFailed.getMessage());
+            return new Result(0, 0, 0);
+        }
         int newlyApplied = 0;
         int acked = 0;
         for (Command command : commands) {

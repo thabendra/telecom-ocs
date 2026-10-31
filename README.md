@@ -412,6 +412,55 @@ connects with `spring.data.redis.username` / `password` and `ssl.bundle: redis-c
 redis-cli --tls --cacert certs/ca.pem --user ops --pass dev-only-ops-password ping
 ```
 
+## Tracing, Redis failover and the VPN (group 7, part 2)
+
+**Tracing (OB-3).** OpenTelemetry through Micrometer Tracing. The gateway simulator makes each charging
+session one trace and sends the W3C `traceparent` header; the backend continues it, adds a span for the
+CHARGING procedure in Oracle (`ocs.charging.oracle`), and sends everything over OTLP to Jaeger
+(`docker compose` starts it; UI at `http://localhost:16686`). Every answer carries `X-Trace-Id`, error
+bodies have a `traceId`, and log lines show `[telecom-ocs,<traceId>,<spanId>]`, so one id finds the
+gateway's call, the backend's work and its logs. The simulator prints `TRACE <id>` with a Jaeger link.
+`TRACING_SAMPLING` (default 1.0) sets how many requests are traced; in production a few percent.
+
+**Redis failover (RD-7).** Profile `redis-sentinel` (`application-redis-sentinel.yml`) points the backend
+at three Sentinels instead of one Redis; they watch the primary and promote a replica when two of them
+agree it is down. `docker-compose.ha.yml` runs it: primary, two replicas, three Sentinels (all TLS + ACL,
+replication with its own `replica` user, Sentinel with its own `sentinel` user) and the backend in a
+container.
+
+```bash
+mvn -DskipTests package
+docker compose -f docker-compose.ha.yml up -d --build
+docker compose -f docker-compose.ha.yml pause redis     # the primary hangs, like a crash
+curl -s localhost:8081/actuator/health                  # Redis UP again a few seconds later
+```
+
+The backend follows the switch by itself (`RedisSentinelConfig`: Lettuce in master/replica mode
+listens to the Sentinels' `+switch-master`). Use `pause`, not `stop`: a stopped container loses its
+DNS name, and Sentinel stops failing over (TILT mode) while a name it watches doesn't resolve.
+A replica can be a moment behind, so a failover may lose the last few writes; Oracle stays the source
+of truth (the `charging_request` check catches a retried charge whose idempotency key was lost).
+
+**VPN and firewall (VP-1 to VP-4).** `docs/vpn-design.md` is the production design: site-to-site IPsec
+(IKEv2, AES-256-GCM, DH group 20, PFS), two tunnels over two ISPs with BGP failover, and the firewall
+allow list (gateways → 8443 and 9443 only). `docker-compose.vpn.yml` builds it locally with WireGuard:
+
+```
+operator-net ── wg-operator ═══ WireGuard tunnel (transit-net) ═══ wg-backend (firewall) ── backend-net
+ (simulator)     10.99.0.1                                          10.99.0.2                (backend, token
+                                                                                              server, Oracle, Redis)
+```
+
+```bash
+mvn -DskipTests package && mvn -f token-server/pom.xml -DskipTests package
+mvn -f gateway-simulator/pom.xml -DskipTests package
+docker compose -f docker-compose.vpn.yml up -d --build
+scripts/vpn-check.sh
+```
+
+`vpn-check.sh` checks from the operator side: the WireGuard handshake, 8443 and 9443 open through the
+tunnel, 8080, 8081, Oracle and Redis closed, and one full charging session by the simulator.
+
 ## Gateway simulator
 
 `gateway-simulator/` is a separate Spring Boot command line app that plays the network gateway: it
@@ -508,7 +557,7 @@ because the backend is slow.
 
 ```bash
 scripts/generate-dev-certs.sh          # test certificates (once)
-docker compose up -d                   # Oracle (ready in about a minute), Redis (TLS), Keycloak, Prometheus, Grafana
+docker compose up -d                   # Oracle (ready in about a minute), Redis (TLS), Keycloak, Prometheus, Grafana, Jaeger
 mvn -f token-server/pom.xml spring-boot:run   # token server on 9443
 mvn spring-boot:run                    # gateway port 8443 (mTLS + token), public port 8080, management port 8081
 ```
@@ -606,6 +655,13 @@ mvn test
 - `RedisSecurityTest`: its own Redis with the compose TLS + ACL setup: the backend's Lua scripts and
   health check work, `FLUSHALL` / `KEYS` / other keys are `NOPERM`, no user, a wrong password or plain
   text gets nothing. (The shared test Redis is a plain container.)
+- `RedisSentinelTest`: a primary, a replica and three Sentinels like `docker-compose.ha.yml` (TLS + ACL);
+  the backend's Sentinel settings find the primary, and after it is stopped they find the promoted
+  replica with the data written before.
+- `TraceIdFilterTest` and `ErrorResponsesTest` (unit): `X-Trace-Id` and `traceId` in error bodies, and
+  nothing breaks without tracing. In the simulator, `GatewaySimulatorTest` checks a session is one
+  observation (`gateway.session`).
+- The VPN demo is checked by `scripts/vpn-check.sh` against the running `docker-compose.vpn.yml`.
 - `UsageEndpointTest`: usage charging against Oracle: app packages, add-ons, splitting across buckets,
   pay as you go, fair usage throttling, quota order and plan data refill.
 
