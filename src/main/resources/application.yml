@@ -12,6 +12,24 @@ spring:
       ddl-auto: validate   # Flyway owns the schema
   flyway:
     enabled: true
+  # local Redis from docker-compose.yml: idempotency store only, Oracle stays the source of truth
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      timeout: 500ms
 
 server:
   port: 8080
+
+telecom:
+  idempotency:
+    # write calls that must carry an Idempotency-Key header (ID-1)
+    paths:
+      - /charging/v1/sessions
+      - /charging/v1/sessions/*/update
+      - /charging/v1/sessions/*/release
+      - /api/subscribers/*/packages
+      - /api/subscribers/*/top-ups
+    result-ttl: 24h       # how long a finished result is kept for retries (ID-7)
+    lock-ttl: 5s          # in-progress lock: ~2x the slowest normal request, so a crashed request frees the key fast (ID-5)

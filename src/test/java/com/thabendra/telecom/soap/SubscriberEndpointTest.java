@@ -1,20 +1,21 @@
 package com.thabendra.telecom.soap;
 
+import com.thabendra.telecom.TestData;
+import com.thabendra.telecom.TestcontainersConfig;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.context.ApplicationContext;
+import org.springframework.context.annotation.Import;
 import org.springframework.core.io.ClassPathResource;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.ws.test.server.MockWebServiceClient;
 import org.springframework.xml.transform.StringSource;
-import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
-import org.testcontainers.oracle.OracleContainer;
 
-import java.time.Duration;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -30,13 +31,10 @@ import static org.springframework.ws.test.server.ResponseMatchers.xpath;
  * Skipped when Docker isn't running.
  */
 @SpringBootTest
+@AutoConfigureMockMvc   // same context as the other integration tests, so containers are shared
+@Import(TestcontainersConfig.class)
 @Testcontainers(disabledWithoutDocker = true)
 class SubscriberEndpointTest {
-
-    @Container
-    @ServiceConnection
-    static OracleContainer oracle = new OracleContainer("gvenzl/oracle-free:23-slim-faststart")
-            .withStartupTimeout(Duration.ofMinutes(5));   // first start on a laptop can be slow
 
     private static final Map<String, String> NS = Map.of("s", WebServiceConfig.NAMESPACE);
 
@@ -46,15 +44,15 @@ class SubscriberEndpointTest {
     @Autowired
     private JdbcTemplate jdbc;
 
+    @Autowired
+    private StringRedisTemplate redis;
+
     private MockWebServiceClient client;
 
     @BeforeEach
     void setUp() {
         client = MockWebServiceClient.createClient(context);
-        jdbc.update("DELETE FROM usage_record");
-        jdbc.update("DELETE FROM subscriber_package");
-        jdbc.update("DELETE FROM plan_change");
-        jdbc.update("DELETE FROM subscriber");
+        TestData.clean(jdbc, redis);
     }
 
     @Test

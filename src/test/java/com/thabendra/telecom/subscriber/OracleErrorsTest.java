@@ -29,13 +29,25 @@ class OracleErrorsTest {
     }
 
     @Test
+    void unknownChargingSessionIsNotFound() {
+        assertThat(OracleErrors.translate(oracleError(20007, "Charging session abc not found")))
+                .isInstanceOf(NotFoundException.class);
+    }
+
+    @Test
+    void releasedChargingSessionIsBusinessRule() {
+        assertThat(OracleErrors.translate(oracleError(20008, "Charging session abc is already released")))
+                .isInstanceOf(BusinessRuleException.class);
+    }
+
+    @Test
     void oracleCodeIsFoundUnderDriverDetail() {
-        // the real driver nests a non-SQL "Error : 20004 ..." exception below the SQLException
-        SQLException sql = new SQLException("ORA-20004: Insufficient balance: 100, plan fee is 1199", "72000", 20004,
-                new RuntimeException("Error : 20004, Position : 0"));
+        // the real driver nests a non-SQL "Error : 20008 ..." exception below the SQLException
+        SQLException sql = new SQLException("ORA-20008: Charging session abc is already released", "72000", 20008,
+                new RuntimeException("Error : 20008, Position : 0"));
         assertThat(OracleErrors.translate(new UncategorizedSQLException("call", "CALL x", sql)))
                 .isInstanceOf(BusinessRuleException.class)
-                .hasMessage("Insufficient balance: 100, plan fee is 1199");
+                .hasMessage("Charging session abc is already released");
     }
 
     @Test

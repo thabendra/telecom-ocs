@@ -126,7 +126,7 @@ public class UsageService {
     public Quota getQuota(String msisdn) {
         Subscriber subscriber = subscribers.getSubscriber(msisdn);
         List<Bucket> buckets = new ArrayList<>(jdbc.query("""
-                SELECT dp.code, dp.name, dp.app, dp.data_mb, sp.data_mb_used, dp.max_bandwidth_kbps,
+                SELECT dp.code, dp.name, dp.app, dp.data_mb, sp.data_mb_used, sp.data_mb_reserved, dp.max_bandwidth_kbps,
                        dp.fair_usage_mb, dp.throttled_bandwidth_kbps, sp.expires_at
                   FROM subscriber_package sp
                   JOIN data_package dp ON dp.id = sp.package_id
@@ -136,7 +136,8 @@ public class UsageService {
                 (rs, i) -> {
                     long used = rs.getLong("data_mb_used");
                     long dataMb = rs.getLong("data_mb");
-                    Long left = rs.wasNull() ? null : Math.max(0, dataMb - used);
+                    // MB held for open charging sessions isn't available
+                    Long left = rs.wasNull() ? null : Math.max(0, dataMb - used - rs.getLong("data_mb_reserved"));
                     long fairUsage = rs.getLong("fair_usage_mb");
                     boolean throttled = !rs.wasNull() && used >= fairUsage;
                     int bandwidth = throttled ? rs.getInt("throttled_bandwidth_kbps") : rs.getInt("max_bandwidth_kbps");
@@ -146,7 +147,7 @@ public class UsageService {
                 subscriber.getId()));
         long planLeft = subscriber.getPlanDataLeftMb();
         buckets.add(new Bucket("PLAN", subscriber.getPlan().getCode(), subscriber.getPlan().getName(), null,
-                planLeft, subscriber.getPlan().getDataMb() - planLeft,
+                planLeft, subscriber.getPlanDataUsedMb(),
                 subscriber.getPlan().getMaxBandwidthKbps(), null));
         return new Quota(msisdn, subscriber.getBalance(), buckets);
     }

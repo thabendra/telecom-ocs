@@ -5,7 +5,7 @@ Extra 25GB) and **usage charging** that decides which package pays for which app
 speed limit applies. The same business logic is exposed as a **contract first SOAP web service**
 (Spring-WS) and a **REST API**, on an **Oracle Database** with **PL/SQL stored procedures**.
 
-**Stack:** Java 21 · Spring Boot 3.4 · Spring Web Services (SOAP, WSDL, XSD validation) · JAXB ·
+**Stack:** Java 21 · Spring Boot 3.4 · Redis · Spring Web Services (SOAP, WSDL, XSD validation) · JAXB ·
 Spring Data JPA / Hibernate · Spring JDBC (SimpleJdbcCall) · Oracle Database Free 23ai · PL/SQL · Flyway ·
 JUnit 5 · Mockito · Spring-WS Test · Testcontainers · Docker Compose · GitHub Actions
 
@@ -56,6 +56,102 @@ lists each bucket's share and the **speed limit** the network should apply now:
 Example: Kamal is on BASIC with a WhatsApp 2GB pack and uses 2100 MB of WhatsApp. 2048 MB comes from
 the WhatsApp pack and the last 52 MB from his plan data.
 
+## Online charging API (for the network gateway)
+
+`RecordUsage` charges *after* traffic is used. The online charging API lets the gateway ask
+*before*: it gets a grant, lets that much traffic through, reports what was used and asks again.
+When nothing is left the answer is `DENY` + `BLOCK`, and the gateway stops the traffic before it
+reaches the destination server.
+
+The gateway can call it over **REST or SOAP**. Both adapters implement the same `ChargingApi`
+interface and get the same `ChargingService` bean by constructor injection:
+
+```
+            ChargingApi<request/response types>     (charging/ChargingApi.java)
+               ▲                        ▲
+ ChargingController (REST, JSON)   ChargingEndpoint (SOAP, XML from the XSD)
+               └──────────┬─────────────┘
+                   ChargingService  (one Spring bean)  ──►  CHARGING PL/SQL package
+```
+
+| Step | REST | SOAP operation | Answer |
+|---|---|---|---|
+| Start | `POST /charging/v1/sessions` (`msisdn`, `app`, `requestedMb`) | `StartSession` | `sessionId` + grant |
+| Update | `POST /charging/v1/sessions/{id}/update` (`requestNumber`, `usedMb`, `requestedMb`) | `UpdateSession` | charges `usedMb`, next grant |
+| Release | `POST /charging/v1/sessions/{id}/release` (`requestNumber`, `usedMb`) | `ReleaseSession` | charges `usedMb`, `totalUsedMb` |
+
+`requestNumber` is the gateway's counter for the session (start is 0, then 1, 2, ...).
+
+A grant is `{result: ALLOW, grantedMb, bandwidthKbps, source, packageCode, validitySeconds}` or
+`{result: DENY, grantedMb: 0, action: BLOCK}`.
+
+```
+Gateway                                  Backend (CHARGING PL/SQL package, V7)
+  │ start  GENERAL, want 100 MB  ───────► reserve 100 MB of plan data (held, not spent)
+  │ ◄── ALLOW 100 MB, 10 Mbps ──────────
+  │ update used 100, want 100    ───────► commit 100 MB, reserve next 100 MB
+  │ ◄── ALLOW 100 MB ───────────────────
+  │ release used 37              ───────► commit 37 MB, free the other 63 MB
+```
+
+- **Reserve → commit:** granted MB (or money, on pay as you go) goes into the bucket's `*_reserved`
+  column. Only the reported `usedMb` is charged; the rest is given back. Reserved quota can't be
+  used by another session (YouTube and WhatsApp at the same time) or by `RecordUsage`.
+- **One bucket per grant**, chosen in the same order as `record_usage`, so each grant has one speed.
+  If the bucket has less left than requested, the grant is smaller and the next request moves on.
+- A report above the grant is capped at the grant (the gateway never lets more through).
+- Every procedure locks the subscriber row first, so charging for one subscriber runs one at a time.
+
+## Safe retries: idempotency
+
+A gateway that times out doesn't know if its request was charged, so it retries. Two layers make
+sure a retry is never charged twice:
+
+```
+Gateway ── Idempotency-Key: K ──► IdempotencyFilter ──► Redis  idem:{client}:{K}
+                                     │ first time: lock (SET NX), run, store the answer (24h)
+                                     │ same K again: replay the stored answer (Idempotent-Replayed: true)
+                                     ▼
+                                 ChargingService ──► Oracle CHARGING_REQUEST (session, requestNumber) PK
+                                                     a repeated number is refused (ORA-20009 → 409)
+```
+
+**Layer 1: Idempotency-Key in Redis** (`idempotency/IdempotencyFilter.java`), on charging start /
+update / release, package purchase and top-up:
+
+| Case | Answer |
+|---|---|
+| No `Idempotency-Key` header | `400` |
+| First request with a key | runs; its response is stored in Redis for 24h |
+| Same key, same request again | the stored response, with `Idempotent-Replayed: true` |
+| Same key, different method, path or body | `422` |
+| Same key while the first is still running | `409` + `Retry-After: 1` |
+| First request ended in a `5xx` | nothing stored, the retry runs again |
+
+Keys are per caller (`X-Client-Id` header, e.g. `pgw-colombo-01`). Every Redis key has a TTL.
+Redis holds only request state: balances and charges live in Oracle. If Redis is down the
+request still runs and layer 2 still protects charging.
+
+**Layer 2: request numbers in Oracle** (`CHARGING_REQUEST`, V6/V7): each update and release is
+stored under a unique `(session_id, request_number)` key, so even if Redis has lost a key the same
+request fails with `409` instead of charging again.
+
+## Gateway simulator
+
+`gateway-simulator/` is a separate Spring Boot command line app that plays the network gateway: it
+starts a session, keeps updating while the user "uses" each grant, blocks on `DENY`, and releases.
+Every request has its own `Idempotency-Key`, the gateway's `X-Client-Id` and a growing `requestNumber`.
+
+```bash
+mvn -f gateway-simulator/pom.xml spring-boot:run
+mvn -f gateway-simulator/pom.xml spring-boot:run -Dspring-boot.run.arguments="--simulator.app=WHATSAPP --simulator.max-updates=30"
+mvn -f gateway-simulator/pom.xml spring-boot:run -Dspring-boot.run.arguments="--simulator.replay-each-request=true"
+```
+
+`replay-each-request` sends every request twice with the same key, like a retry after a timeout,
+and fails if the backend doesn't replay the first answer. Settings are in
+`gateway-simulator/src/main/resources/application.yml`.
+
 ## SOAP operations
 
 | Operation | What it does |
@@ -70,6 +166,7 @@ the WhatsApp pack and the last 52 MB from his plan data.
 | `ActivatePackage` | Buy a package from the balance; valid for its number of days (PL/SQL) |
 | `RecordUsage` | Charge MB used by an app and return the speed limit (PL/SQL) |
 | `GetQuota` | Data left in every bucket, in charging order, with each bucket's current speed |
+| `StartSession` / `UpdateSession` / `ReleaseSession` | Online charging for the gateway (see above) |
 
 ## REST endpoints
 
@@ -88,7 +185,7 @@ the WhatsApp pack and the last 52 MB from his plan data.
 ## Run locally
 
 ```bash
-docker compose up -d          # Oracle Database Free, ready in about a minute
+docker compose up -d          # Oracle Database Free (ready in about a minute) + Redis
 mvn spring-boot:run           # Flyway creates the tables, seed data and the procedures
 ```
 
@@ -111,7 +208,13 @@ mvn test
 - `SubscriberServiceTest`, `OracleErrorsTest`: unit tests with Mockito, including mapping of Oracle errors.
 - `SubscriberEndpointTest`: SOAP tests against a real Oracle container (Testcontainers): XSD validation,
   faults, plan change and the audit table.
+- `ChargingControllerTest` (REST) and `ChargingEndpointTest` (SOAP): online charging against Oracle:
+  grants per bucket, reserve → commit, DENY + BLOCK, session errors.
+- `IdempotencyTest`: retries against Oracle + Redis: replay, 400 / 422 / 409, keys per client, TTL,
+  and the Oracle request-number check when Redis has lost the key.
+- `gateway-simulator`: `GatewaySimulatorTest` checks the simulator's requests against a mocked backend.
 - `UsageEndpointTest`: usage charging against Oracle: app packages, add-ons, splitting across buckets,
   pay as you go, fair usage throttling, quota order and plan data refill.
 
-The Oracle tests are skipped when Docker isn't running.
+All integration tests share one Oracle and one Redis container (`TestcontainersConfig`), and are
+skipped when Docker isn't running.

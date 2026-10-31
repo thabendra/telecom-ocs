@@ -18,27 +18,23 @@ public class DataPackage {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Column(nullable = false, unique = true, length = 20)
     private String code;
 
-    @Column(nullable = false, length = 60)
     private String name;
 
     // null = add-on data any app can use
-    @Column(length = 20)
     private String app;
 
-    @Column(nullable = false, precision = 10, scale = 2)
     private BigDecimal price;
 
     // null = unlimited
     @Column(name = "data_mb")
     private Long dataMb;
 
-    @Column(name = "validity_days", nullable = false)
+    @Column(name = "validity_days")
     private Integer validityDays;
 
-    @Column(name = "max_bandwidth_kbps", nullable = false)
+    @Column(name = "max_bandwidth_kbps")
     private Integer maxBandwidthKbps;
 
     @Column(name = "fair_usage_mb")

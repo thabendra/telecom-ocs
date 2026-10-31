@@ -334,4 +334,120 @@
             </xs:sequence>
         </xs:complexType>
     </xs:element>
+
+    <!-- ===== online charging (gateway -> backend), same operations as /charging/v1/sessions ===== -->
+
+    <xs:simpleType name="SessionId">
+        <xs:restriction base="xs:string">
+            <xs:pattern value="[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"/>
+        </xs:restriction>
+    </xs:simpleType>
+
+    <xs:simpleType name="ChunkMb">
+        <xs:restriction base="xs:long">
+            <xs:minInclusive value="0"/>
+            <xs:maxInclusive value="10240"/>
+        </xs:restriction>
+    </xs:simpleType>
+
+    <xs:simpleType name="RequestNumber">
+        <xs:annotation>
+            <xs:documentation>Gateway's counter for the session: start is 0, then 1, 2, ... A repeated number is refused.</xs:documentation>
+        </xs:annotation>
+        <xs:restriction base="xs:long">
+            <xs:minInclusive value="1"/>
+        </xs:restriction>
+    </xs:simpleType>
+
+    <xs:simpleType name="GrantResult">
+        <xs:restriction base="xs:string">
+            <xs:enumeration value="ALLOW"/>
+            <xs:enumeration value="DENY"/>
+        </xs:restriction>
+    </xs:simpleType>
+
+    <xs:simpleType name="DenyAction">
+        <xs:restriction base="xs:string">
+            <xs:enumeration value="BLOCK"/>
+        </xs:restriction>
+    </xs:simpleType>
+
+    <xs:complexType name="Grant">
+        <xs:annotation>
+            <xs:documentation>ALLOW: pass grantedMb more at bandwidthKbps. DENY: grantedMb is 0, apply action.</xs:documentation>
+        </xs:annotation>
+        <xs:sequence>
+            <xs:element name="sessionId" type="tns:SessionId"/>
+            <xs:element name="result" type="tns:GrantResult"/>
+            <xs:element name="grantedMb" type="xs:long"/>
+            <xs:element name="bandwidthKbps" type="xs:int" minOccurs="0"/>
+            <xs:element name="source" type="tns:ChargeSource" minOccurs="0"/>
+            <xs:element name="packageCode" type="tns:PlanCode" minOccurs="0"/>
+            <xs:element name="validitySeconds" type="xs:int" minOccurs="0"/>
+            <xs:element name="action" type="tns:DenyAction" minOccurs="0"/>
+        </xs:sequence>
+    </xs:complexType>
+
+    <xs:element name="StartSessionRequest">
+        <xs:complexType>
+            <xs:sequence>
+                <xs:element name="msisdn" type="tns:Msisdn"/>
+                <xs:element name="app" type="tns:App"/>
+                <xs:element name="requestedMb">
+                    <xs:simpleType>
+                        <xs:restriction base="tns:ChunkMb">
+                            <xs:minInclusive value="1"/>
+                        </xs:restriction>
+                    </xs:simpleType>
+                </xs:element>
+            </xs:sequence>
+        </xs:complexType>
+    </xs:element>
+    <xs:element name="StartSessionResponse">
+        <xs:complexType>
+            <xs:sequence>
+                <xs:element name="grant" type="tns:Grant"/>
+            </xs:sequence>
+        </xs:complexType>
+    </xs:element>
+
+    <xs:element name="UpdateSessionRequest">
+        <xs:complexType>
+            <xs:sequence>
+                <xs:element name="sessionId" type="tns:SessionId"/>
+                <xs:element name="requestNumber" type="tns:RequestNumber"/>
+                <xs:element name="usedMb" type="xs:long">
+                    <xs:annotation>
+                        <xs:documentation>Used from the last grant; anything above the grant is not charged</xs:documentation>
+                    </xs:annotation>
+                </xs:element>
+                <xs:element name="requestedMb" type="tns:ChunkMb"/>
+            </xs:sequence>
+        </xs:complexType>
+    </xs:element>
+    <xs:element name="UpdateSessionResponse">
+        <xs:complexType>
+            <xs:sequence>
+                <xs:element name="grant" type="tns:Grant"/>
+            </xs:sequence>
+        </xs:complexType>
+    </xs:element>
+
+    <xs:element name="ReleaseSessionRequest">
+        <xs:complexType>
+            <xs:sequence>
+                <xs:element name="sessionId" type="tns:SessionId"/>
+                <xs:element name="requestNumber" type="tns:RequestNumber"/>
+                <xs:element name="usedMb" type="xs:long"/>
+            </xs:sequence>
+        </xs:complexType>
+    </xs:element>
+    <xs:element name="ReleaseSessionResponse">
+        <xs:complexType>
+            <xs:sequence>
+                <xs:element name="sessionId" type="tns:SessionId"/>
+                <xs:element name="totalUsedMb" type="xs:long"/>
+            </xs:sequence>
+        </xs:complexType>
+    </xs:element>
 </xs:schema>

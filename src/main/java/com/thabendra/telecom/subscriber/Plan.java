@@ -17,22 +17,20 @@ public class Plan {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Column(nullable = false, unique = true, length = 20)
     private String code;
 
-    @Column(nullable = false, length = 60)
     private String name;
 
-    @Column(name = "monthly_fee", nullable = false, precision = 10, scale = 2)
+    @Column(name = "monthly_fee")
     private BigDecimal monthlyFee;
 
-    @Column(name = "data_gb", nullable = false)
+    @Column(name = "data_gb")
     private Integer dataGb;
 
-    @Column(name = "voice_minutes", nullable = false)
+    @Column(name = "voice_minutes")
     private Integer voiceMinutes;
 
-    @Column(name = "max_bandwidth_kbps", nullable = false)
+    @Column(name = "max_bandwidth_kbps")
     private Integer maxBandwidthKbps;
 
     protected Plan() {

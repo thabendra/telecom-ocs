@@ -26,31 +26,30 @@ public class Subscriber {
     private Long id;
 
     // mobile number in international format without "+", e.g. 94771234567
-    @Column(nullable = false, unique = true, length = 11)
     private String msisdn;
 
-    @Column(name = "full_name", nullable = false, length = 100)
+    @Column(name = "full_name")
     private String fullName;
 
-    @Column(nullable = false, length = 12)
     private String nic;
 
-    @Column(nullable = false, precision = 10, scale = 2)
     private BigDecimal balance;
 
     @Enumerated(EnumType.STRING)
-    @Column(nullable = false, length = 10)
     private Status status = Status.ACTIVE;
 
     @ManyToOne(fetch = FetchType.EAGER, optional = false)
-    @JoinColumn(name = "plan_id", nullable = false)
+    @JoinColumn(name = "plan_id")
     private Plan plan;
 
     // only the PL/SQL procedures change this, so JPA never writes it
-    @Column(name = "plan_data_used_mb", nullable = false, insertable = false, updatable = false)
+    @Column(name = "plan_data_used_mb", insertable = false, updatable = false)
     private Long planDataUsedMb;
 
-    @Column(name = "created_at", nullable = false, insertable = false, updatable = false)
+    @Column(name = "plan_data_reserved_mb", insertable = false, updatable = false)
+    private Long planDataReservedMb;
+
+    @Column(name = "created_at", insertable = false, updatable = false)
     private LocalDateTime createdAt;
 
     protected Subscriber() {
@@ -72,9 +71,14 @@ public class Subscriber {
         return id;
     }
 
+    public long getPlanDataUsedMb() {
+        return planDataUsedMb == null ? 0 : planDataUsedMb;
+    }
+
+    // MB held for open charging sessions isn't available
     public long getPlanDataLeftMb() {
-        long used = planDataUsedMb == null ? 0 : planDataUsedMb;
-        return Math.max(0, plan.getDataMb() - used);
+        long reserved = planDataReservedMb == null ? 0 : planDataReservedMb;
+        return Math.max(0, plan.getDataMb() - getPlanDataUsedMb() - reserved);
     }
 
     public String getMsisdn() {

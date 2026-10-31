@@ -18,7 +18,11 @@ CREATE TABLE subscriber (
     status             VARCHAR2(10)  DEFAULT 'ACTIVE' NOT NULL CHECK (status IN ('ACTIVE', 'SUSPENDED')),
     plan_id            NUMBER        NOT NULL REFERENCES plan (id),
     plan_data_used_mb  NUMBER(12)    DEFAULT 0 NOT NULL CHECK (plan_data_used_mb >= 0),
-    created_at         TIMESTAMP     DEFAULT SYSTIMESTAMP NOT NULL
+    -- held for open charging sessions: granted to the gateway but not yet reported as used
+    plan_data_reserved_mb  NUMBER(12)    DEFAULT 0 NOT NULL CHECK (plan_data_reserved_mb >= 0),
+    balance_reserved       NUMBER(10, 2) DEFAULT 0 NOT NULL CHECK (balance_reserved >= 0),
+    created_at         TIMESTAMP     DEFAULT SYSTIMESTAMP NOT NULL,
+    CONSTRAINT chk_balance_reserved CHECK (balance_reserved <= balance)
 );
 
 CREATE INDEX idx_subscriber_plan ON subscriber (plan_id);
@@ -61,6 +65,7 @@ CREATE TABLE subscriber_package (
     subscriber_id  NUMBER     NOT NULL REFERENCES subscriber (id),
     package_id     NUMBER     NOT NULL REFERENCES data_package (id),
     data_mb_used   NUMBER(12) DEFAULT 0 NOT NULL CHECK (data_mb_used >= 0),
+    data_mb_reserved NUMBER(12) DEFAULT 0 NOT NULL CHECK (data_mb_reserved >= 0),
     activated_at   TIMESTAMP  DEFAULT SYSTIMESTAMP NOT NULL,
     expires_at     TIMESTAMP  NOT NULL
 );

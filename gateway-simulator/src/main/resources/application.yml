@@ -1,0 +1,15 @@
+spring:
+  main:
+    web-application-type: none   # command line app
+    banner-mode: off
+
+simulator:
+  backend-url: http://localhost:8080
+  client-id: pgw-colombo-01      # sent as X-Client-Id: idempotency keys are scoped per gateway
+  msisdn: "94771234567"
+  app: YOUTUBE                   # YOUTUBE, WHATSAPP, FACEBOOK or GENERAL (what DPI detected)
+  chunk-mb: 100                  # MB asked for in every request
+  max-updates: 5                 # stop asking after this many updates (user closes the app)
+  used-percent: 100              # how much of each grant the user really uses
+  final-used-mb: 37              # usage reported in the release
+  replay-each-request: false     # send every request twice with the same key to show idempotent replay

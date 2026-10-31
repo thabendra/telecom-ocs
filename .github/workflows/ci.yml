@@ -17,3 +17,4 @@ jobs:
           cache: maven
       # Docker is available on GitHub runners, so the Oracle Testcontainers tests run here too
       - run: mvn -B verify
+      - run: mvn -B -f gateway-simulator/pom.xml verify

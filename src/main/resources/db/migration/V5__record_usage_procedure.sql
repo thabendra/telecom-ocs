@@ -37,7 +37,9 @@ BEGIN
 
     -- lock the subscriber: usage events for one subscriber are charged one at a time
     BEGIN
-        SELECT s.id, s.status, s.balance, s.plan_data_used_mb, p.data_gb * 1024, p.max_bandwidth_kbps
+        -- MB and money reserved for open charging sessions (V7) are not available here
+        SELECT s.id, s.status, s.balance - s.balance_reserved, s.plan_data_used_mb + s.plan_data_reserved_mb,
+               p.data_gb * 1024, p.max_bandwidth_kbps
           INTO v_subscriber_id, v_status, v_balance, v_plan_used_mb, v_plan_data_mb, v_plan_bandwidth
           FROM subscriber s
           JOIN plan p ON p.id = s.plan_id
@@ -56,7 +58,7 @@ BEGIN
 
     -- 1 + 2: app packages first, then add-on packages
     FOR bucket IN (
-        SELECT sp.id, sp.data_mb_used, dp.data_mb, dp.max_bandwidth_kbps,
+        SELECT sp.id, sp.data_mb_used, sp.data_mb_reserved, dp.data_mb, dp.max_bandwidth_kbps,
                dp.fair_usage_mb, dp.throttled_bandwidth_kbps
           FROM subscriber_package sp
           JOIN data_package dp ON dp.id = sp.package_id
@@ -70,7 +72,7 @@ BEGIN
         IF bucket.data_mb IS NULL THEN
             v_take := v_remaining;                                        -- unlimited
         ELSE
-            v_take := LEAST(v_remaining, bucket.data_mb - bucket.data_mb_used);
+            v_take := LEAST(v_remaining, bucket.data_mb - bucket.data_mb_used - bucket.data_mb_reserved);
         END IF;
 
         IF v_take > 0 THEN

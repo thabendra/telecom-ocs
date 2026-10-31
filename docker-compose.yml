@@ -1,4 +1,4 @@
-# Local Oracle Database Free 23ai. First start takes ~1 minute; the app user "telecom" is created automatically.
+# Local Oracle Database Free 23ai + Redis. Oracle's first start takes ~1 minute; the app user "telecom" is created automatically.
 # Passwords here are local test values only.
 services:
   oracle:
@@ -16,6 +16,12 @@ services:
       interval: 10s
       timeout: 5s
       retries: 20
+
+  # idempotency store; data in Redis is short lived, Oracle holds balances and charges
+  redis:
+    image: redis:7.4-alpine
+    ports:
+      - "6379:6379"
 
 volumes:
   oracle-data:
