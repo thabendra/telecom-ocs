@@ -32,7 +32,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * reserve -> commit, reserved quota hidden from other sessions, DENY when nothing is left.
  * Skipped when Docker isn't running.
  */
-@SpringBootTest
+@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)   // same in every class: one shared context
 @AutoConfigureMockMvc
 @Import(TestcontainersConfig.class)
 @Testcontainers(disabledWithoutDocker = true)

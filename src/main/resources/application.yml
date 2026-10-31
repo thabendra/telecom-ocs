@@ -31,5 +31,11 @@ telecom:
       - /charging/v1/sessions/*/release
       - /api/subscribers/*/packages
       - /api/subscribers/*/top-ups
+    # SOAP: every operation is POST /ws, so the operation name decides (the first element in soapenv:Body)
+    soap-path: /ws/**
+    soap-operations:
+      - StartSessionRequest
+      - UpdateSessionRequest
+      - ReleaseSessionRequest
     result-ttl: 24h       # how long a finished result is kept for retries (ID-7)
     lock-ttl: 5s          # in-progress lock: ~2x the slowest normal request, so a crashed request frees the key fast (ID-5)

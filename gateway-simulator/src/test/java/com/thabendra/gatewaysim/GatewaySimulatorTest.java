@@ -1,24 +1,30 @@
 package com.thabendra.gatewaysim;
 
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.client.MockRestServiceServer;
 import org.springframework.test.web.client.RequestMatcher;
 import org.springframework.test.web.client.ResponseActions;
 import org.springframework.web.client.RestClient;
 
+import java.time.Clock;
 import java.util.HashSet;
 import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.hamcrest.Matchers.containsString;
 import static org.springframework.http.HttpMethod.POST;
+import static org.springframework.test.web.client.match.MockRestRequestMatchers.content;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.header;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.jsonPath;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.method;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
+import static org.springframework.test.web.client.response.MockRestResponseCreators.withStatus;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 
 /** The simulator against a mocked backend: request order, numbers and headers a gateway must send. */
@@ -109,10 +115,74 @@ class GatewaySimulatorTest {
                 .hasMessageContaining("was not replayed");
     }
 
+    @Test
+    void backendDownFailsOpenAfterRetries() {
+        for (int i = 0; i <= RetryPolicy.defaults().maxRetries(); i++) {
+            backend.expect(requestTo("http://backend" + START))
+                    .andRespond(withStatus(HttpStatus.SERVICE_UNAVAILABLE));
+        }
+
+        GatewaySimulator.Outcome outcome = simulator(5, false).run();
+
+        backend.verify();
+        assertThat(outcome.failedOpen()).isTrue();   // RL-6: traffic is let through, not blocked
+        assertThat(outcome.blocked()).isFalse();
+    }
+
+    @Test
+    void sameSessionFlowWorksOverSoap() {
+        expectSoap("StartSessionRequest", soapGrant("StartSessionResponse", "ALLOW", 100),
+                "<s:msisdn>94771234567</s:msisdn>", "<s:app>YOUTUBE</s:app>");
+        expectSoap("UpdateSessionRequest", soapGrant("UpdateSessionResponse", "DENY", 0),
+                "<s:requestNumber>1</s:requestNumber>", "<s:usedMb>100</s:usedMb>");
+        expectSoap("ReleaseSessionRequest", """
+                <s:ReleaseSessionResponse xmlns:s="http://thabendra.com/telecom/subscriber">
+                  <s:sessionId>%s</s:sessionId><s:totalUsedMb>100</s:totalUsedMb>
+                </s:ReleaseSessionResponse>""".formatted(SESSION),
+                "<s:requestNumber>2</s:requestNumber>", "<s:usedMb>0</s:usedMb>");
+
+        GatewaySimulator.Outcome outcome = simulator(5, false, SimulatorProperties.Protocol.SOAP).run();
+
+        backend.verify();
+        assertThat(outcome.blocked()).isTrue();
+        assertThat(outcome.totalUsedMb()).isEqualTo(100);
+    }
+
     private GatewaySimulator simulator(int maxUpdates, boolean replay) {
-        SimulatorProperties props = new SimulatorProperties("http://backend", "pgw-test-01", "94771234567",
-                "YOUTUBE", 100, maxUpdates, 100, 37, replay);
-        return new GatewaySimulator(new ChargingClient(builder, props.backendUrl(), props.clientId()), props);
+        return simulator(maxUpdates, replay, SimulatorProperties.Protocol.REST);
+    }
+
+    // built the same way as the app: ChargingClients picks the protocol, the simulator only sees the interface
+    private GatewaySimulator simulator(int maxUpdates, boolean replay, SimulatorProperties.Protocol protocol) {
+        SimulatorProperties props = new SimulatorProperties("http://backend", "pgw-test-01", protocol,
+                "94771234567", "YOUTUBE", 100, maxUpdates, 100, 37, replay, RetryPolicy.defaults());
+        RetryingCaller caller = new RetryingCaller(props.retry(), wait -> { }, Clock.systemUTC(),
+                new SimpleMeterRegistry());
+        return new GatewaySimulator(ChargingClients.create(props, builder, caller), props);
+    }
+
+    private void expectSoap(String operation, String responsePayload, String... mustContain) {
+        ResponseActions call = backend.expect(requestTo("http://backend/ws"))
+                .andExpect(method(POST))
+                .andExpect(content().string(containsString("<s:" + operation + ">")));
+        for (String part : mustContain) {
+            call.andExpect(content().string(containsString(part)));
+        }
+        call.andRespond(withSuccess("""
+                <SOAP-ENV:Envelope xmlns:SOAP-ENV="http://schemas.xmlsoap.org/soap/envelope/">
+                  <SOAP-ENV:Body>%s</SOAP-ENV:Body>
+                </SOAP-ENV:Envelope>""".formatted(responsePayload), MediaType.TEXT_XML));
+    }
+
+    private static String soapGrant(String response, String result, long grantedMb) {
+        String extra = "ALLOW".equals(result)
+                ? "<s:bandwidthKbps>2048</s:bandwidthKbps><s:source>PACKAGE</s:source>"
+                + "<s:packageCode>YT_UNLIMITED</s:packageCode><s:validitySeconds>3600</s:validitySeconds>"
+                : "<s:action>BLOCK</s:action>";
+        return """
+                <s:%s xmlns:s="http://thabendra.com/telecom/subscriber"><s:grant>
+                  <s:sessionId>%s</s:sessionId><s:result>%s</s:result><s:grantedMb>%d</s:grantedMb>%s
+                </s:grant></s:%s>""".formatted(response, SESSION, result, grantedMb, extra, response);
     }
 
     // one expected call: common gateway headers + the given checks, answered with json

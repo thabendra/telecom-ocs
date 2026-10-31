@@ -14,6 +14,7 @@ import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
 import org.springframework.util.AntPathMatcher;
 import org.springframework.web.filter.OncePerRequestFilter;
+import org.springframework.web.util.HtmlUtils;
 import org.springframework.web.util.ContentCachingResponseWrapper;
 
 import java.io.IOException;
@@ -40,6 +41,9 @@ import java.util.regex.Pattern;
  *   <li>ID-7: results are kept in Redis for resultTtl</li>
  *   <li>ID-9: only 2xx/4xx are stored; after a 5xx the key is dropped so the caller can retry</li>
  * </ul>
+ * SOAP works the same way: every SOAP call is POST /ws, so the operation in soapenv:Body decides
+ * (only the configured soapOperations, the charging writes, need a key). Errors to a SOAP caller are
+ * a SOAP Client fault with the same HTTP status (400 / 409 + Retry-After / 422) instead of problem JSON.
  * The lookup and the lock are one Lua script call, so a hit and a miss each cost one Redis round trip.
  * If Redis can't be reached the request still runs; the Oracle request-number check (ID-8) still
  * stops a charging request from being charged twice.
@@ -71,12 +75,18 @@ public class IdempotencyFilter extends OncePerRequestFilter {
     protected boolean shouldNotFilter(HttpServletRequest request) {
         String path = pathOf(request);
         return !WRITE_METHODS.contains(request.getMethod())
-                || properties.paths().stream().noneMatch(pattern -> paths.match(pattern, path));
+                || (properties.paths().stream().noneMatch(pattern -> paths.match(pattern, path)) && !isSoap(request));
     }
 
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain)
             throws ServletException, IOException {
+        CachedBodyRequest cached = new CachedBodyRequest(request);
+        if (isSoap(request) && !properties.soapOperations().contains(SoapOperation.of(cached.body()))) {
+            chain.doFilter(cached, response);   // SOAP reads and other operations need no key
+            return;
+        }
+
         String key = request.getHeader(KEY_HEADER);
         if (key == null || key.isBlank()) {
             problem(request, response, HttpStatus.BAD_REQUEST, "Missing " + KEY_HEADER + " header: send a new"
@@ -92,7 +102,6 @@ public class IdempotencyFilter extends OncePerRequestFilter {
                 .filter(id -> VALID_TOKEN.matcher(id).matches())
                 .orElse(ANONYMOUS_CLIENT);
 
-        CachedBodyRequest cached = new CachedBodyRequest(request);
         String requestHash = fingerprint(request.getMethod(), pathOf(request), cached.body());
         String redisKey = IdempotencyStore.redisKey(clientId, key);
 
@@ -170,6 +179,10 @@ public class IdempotencyFilter extends OncePerRequestFilter {
 
     private void problem(HttpServletRequest request, HttpServletResponse response, HttpStatus status, String detail)
             throws IOException {
+        if (isSoap(request)) {
+            soapFault(response, status, detail);
+            return;
+        }
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("type", "about:blank");
         body.put("title", status.getReasonPhrase());
@@ -179,6 +192,26 @@ public class IdempotencyFilter extends OncePerRequestFilter {
         response.setStatus(status.value());
         response.setContentType(MediaType.APPLICATION_PROBLEM_JSON_VALUE);
         json.writeValue(response.getOutputStream(), body);
+    }
+
+    // a SOAP caller can read a fault, not problem JSON; the HTTP status still says 400 / 409 / 422
+    private static void soapFault(HttpServletResponse response, HttpStatus status, String detail) throws IOException {
+        String fault = """
+                <SOAP-ENV:Envelope xmlns:SOAP-ENV="http://schemas.xmlsoap.org/soap/envelope/">
+                  <SOAP-ENV:Body>
+                    <SOAP-ENV:Fault>
+                      <faultcode>SOAP-ENV:Client</faultcode>
+                      <faultstring xml:lang="en">%s</faultstring>
+                    </SOAP-ENV:Fault>
+                  </SOAP-ENV:Body>
+                </SOAP-ENV:Envelope>""".formatted(HtmlUtils.htmlEscape(detail));
+        response.setStatus(status.value());
+        response.setContentType(MediaType.TEXT_XML_VALUE + ";charset=UTF-8");
+        response.getOutputStream().write(fault.getBytes(StandardCharsets.UTF_8));
+    }
+
+    private boolean isSoap(HttpServletRequest request) {
+        return paths.match(properties.soapPath(), pathOf(request));
     }
 
     /** SHA-256 of method + path + body: the same key must always mean exactly the same request (ID-4). */

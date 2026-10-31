@@ -17,11 +17,13 @@ import java.util.function.Supplier;
  * Each request gets a new Idempotency-Key. With replayEachRequest the same request is sent twice
  * with the same key, as a retry after a timeout would be; the backend must answer the same and
  * charge once.
+ * If the backend can't be reached in time (retries, time budget or circuit breaker, section I),
+ * the gateway fails open: the session stops here and the user's traffic is let through (RL-6).
  */
 public class GatewaySimulator {
 
     /** How the session ended. */
-    public record Outcome(String sessionId, boolean blocked, int updates, long totalUsedMb) {
+    public record Outcome(String sessionId, boolean blocked, int updates, long totalUsedMb, boolean failedOpen) {
     }
 
     private static final Logger log = LoggerFactory.getLogger(GatewaySimulator.class);
@@ -35,14 +37,24 @@ public class GatewaySimulator {
     }
 
     public Outcome run() {
-        log.info("START  {} {} asks {} MB", props.msisdn(), props.app(), props.chunkMb());
+        try {
+            return runSession();
+        } catch (FailOpenException e) {
+            log.warn("FAIL OPEN: {}; letting {}'s traffic through and charging it later", e.getMessage(),
+                    props.msisdn());
+            return new Outcome(null, false, 0, 0, true);
+        }
+    }
+
+    private Outcome runSession() {
+        log.info("START  {} {} asks {} MB (over {})", props.msisdn(), props.app(), props.chunkMb(), props.protocol());
         String startKey = ChargingClient.newKey();
         Grant grant = send(() -> client.start(startKey, props.msisdn(), props.app(), props.chunkMb()));
         String sessionId = grant.sessionId();
         logGrant(grant);
         if (!grant.allowed()) {
             log.info("BLOCK  traffic of {} (session {} closed by backend)", props.msisdn(), sessionId);
-            return new Outcome(sessionId, true, 0, 0);
+            return new Outcome(sessionId, true, 0, 0, false);
         }
 
         long requestNumber = 0;
@@ -68,7 +80,7 @@ public class GatewaySimulator {
         log.info("RELEASE #{} used {} MB", number, finalUsed);
         Release release = send(() -> client.release(key, sessionId, number, finalUsed));
         log.info("CLOSED session {}: {} MB charged in total", sessionId, release.totalUsedMb());
-        return new Outcome(sessionId, blocked, (int) requestNumber - 1, release.totalUsedMb());
+        return new Outcome(sessionId, blocked, (int) requestNumber - 1, release.totalUsedMb(), false);
     }
 
     // sends the request; in replay mode sends it a second time with the same key and checks the answer matches

@@ -1,12 +1,20 @@
 package com.thabendra.gatewaysim;
 
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.web.client.RestClient;
+
+import java.time.Clock;
+import java.util.List;
 
 /**
  * Runs one simulated gateway charging session against the backend and exits.
@@ -19,13 +27,31 @@ import org.springframework.web.client.RestClient;
 @EnableConfigurationProperties(SimulatorProperties.class)
 public class GatewaySimulatorApplication {
 
+    private static final Logger log = LoggerFactory.getLogger(GatewaySimulatorApplication.class);
+
     public static void main(String[] args) {
         SpringApplication.run(GatewaySimulatorApplication.class, args);
     }
 
+    // a command line app has no actuator, so keep the counters in memory and print them at the end
     @Bean
-    ChargingClient chargingClient(RestClient.Builder builder, SimulatorProperties props) {
-        return new ChargingClient(builder, props.backendUrl(), props.clientId());
+    MeterRegistry meterRegistry() {
+        return new SimpleMeterRegistry();
+    }
+
+    @Bean
+    RetryingCaller retryingCaller(SimulatorProperties props, MeterRegistry metrics) {
+        return new RetryingCaller(props.retry(), duration -> Thread.sleep(duration), Clock.systemUTC(), metrics);
+    }
+
+    // REST or SOAP from simulator.protocol, wrapped with the retry policy; the simulator only sees the interface
+    @Bean
+    ChargingClient chargingClient(RestClient.Builder builder, SimulatorProperties props, RetryingCaller caller) {
+        // RT-8: one try may not take longer than the per-try timeout (both protocols use this HTTP client)
+        SimpleClientHttpRequestFactory timeouts = new SimpleClientHttpRequestFactory();
+        timeouts.setConnectTimeout(props.retry().perTryTimeout());
+        timeouts.setReadTimeout(props.retry().perTryTimeout());
+        return ChargingClients.create(props, builder.requestFactory(timeouts), caller);
     }
 
     @Bean
@@ -35,7 +61,14 @@ public class GatewaySimulatorApplication {
 
     @Bean
     @ConditionalOnProperty(name = "simulator.run-on-startup", havingValue = "true", matchIfMissing = true)
-    CommandLineRunner runSession(GatewaySimulator simulator) {
-        return args -> simulator.run();
+    CommandLineRunner runSession(GatewaySimulator simulator, MeterRegistry metrics) {
+        return args -> {
+            simulator.run();
+            // RT-10
+            for (String name : List.of(RetryingCaller.RETRIES, RetryingCaller.SUCCEEDED_AFTER_RETRY,
+                    RetryingCaller.EXHAUSTED, RetryingCaller.CIRCUIT_REJECTED)) {
+                log.info("METRIC {} = {}", name, (long) metrics.counter(name).count());
+            }
+        };
     }
 }

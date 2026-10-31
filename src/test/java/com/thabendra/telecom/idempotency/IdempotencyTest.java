@@ -1,25 +1,39 @@
 package com.thabendra.telecom.idempotency;
 
+import com.github.dockerjava.api.DockerClient;
 import com.jayway.jsonpath.JsonPath;
 import com.thabendra.telecom.TestData;
 import com.thabendra.telecom.TestcontainersConfig;
+import com.thabendra.telecom.soap.WebServiceConfig;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.context.annotation.Import;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
+import org.springframework.web.client.RestClient;
+import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.Callable;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.containsString;
@@ -31,10 +45,11 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 /**
  * Section H against real Oracle + Redis: retries with the same Idempotency-Key are answered once,
- * misuse of a key is refused, and the Oracle request-number check still stops a double charge
- * when Redis has lost the key. Skipped when Docker isn't running.
+ * misuse of a key is refused, two copies at the same moment run once, and the Oracle request-number
+ * check still stops a double charge when Redis has lost the key or can't be reached (TE-3).
+ * Skipped when Docker isn't running.
  */
-@SpringBootTest
+@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)   // same in every class: one shared context
 @AutoConfigureMockMvc
 @Import(TestcontainersConfig.class)
 @Testcontainers(disabledWithoutDocker = true)
@@ -42,6 +57,10 @@ class IdempotencyTest {
 
     private static final String MSISDN = "94771234567";
     private static final String START_BODY = "{\"msisdn\":\"%s\",\"app\":\"GENERAL\",\"requestedMb\":100}".formatted(MSISDN);
+    private static final String SOAP_START = """
+            <s:StartSessionRequest>
+              <s:msisdn>%s</s:msisdn><s:app>GENERAL</s:app><s:requestedMb>100</s:requestedMb>
+            </s:StartSessionRequest>""".formatted(MSISDN);
 
     @Autowired
     private MockMvc mvc;
@@ -54,6 +73,13 @@ class IdempotencyTest {
 
     @Autowired
     private IdempotencyStore store;
+
+    @Autowired
+    @Qualifier("redis")
+    private GenericContainer<?> redisContainer;
+
+    @LocalServerPort
+    private int port;
 
     @BeforeEach
     void cleanUp() throws Exception {
@@ -203,6 +229,141 @@ class IdempotencyTest {
                 .andExpect(jsonPath("$.detail").value(containsString("already processed")));
 
         assertThat(subscriberColumn("plan_data_used_mb")).isEqualTo(60);
+    }
+
+    @Test
+    void twoCopiesSentAtTheSameMomentRunOnce() throws Exception {   // TE-3: concurrent retry
+        String key = newKey();
+        CountDownLatch go = new CountDownLatch(1);
+        ExecutorService pool = Executors.newFixedThreadPool(2);
+        List<Integer> statuses;
+        try {
+            Callable<Integer> send = () -> {
+                go.await();
+                return mvc.perform(startRequest(key)).andReturn().getResponse().getStatus();
+            };
+            Future<Integer> first = pool.submit(send);
+            Future<Integer> second = pool.submit(send);
+            go.countDown();   // release both at once
+            statuses = List.of(first.get(30, TimeUnit.SECONDS), second.get(30, TimeUnit.SECONDS));
+        } finally {
+            pool.shutdownNow();
+        }
+
+        // one ran (201); the other saw the lock (409) or, if it came a moment later, the replay (201)
+        assertThat(statuses).contains(201).allMatch(status -> status == 201 || status == 409);
+        assertThat(count("charging_session")).isEqualTo(1);
+        assertThat(subscriberColumn("plan_data_reserved_mb")).isEqualTo(100);
+    }
+
+    @Test
+    void redisDownStillNoDoubleCharge() throws Exception {   // TE-3: Redis stopped, ID-8 + RD-6
+        String session = startSession();
+        perform(updateRequest(newKey(), session, 1, 60)).andExpect(status().isOk());
+
+        // pause, not stop: the container keeps its port, so later tests reconnect to the same Redis
+        DockerClient docker = redisContainer.getDockerClient();
+        docker.pauseContainerCmd(redisContainer.getContainerId()).exec();
+        try {
+            // Redis can't answer, so the filter lets the retry through; Oracle's request number stops it
+            perform(updateRequest(newKey(), session, 1, 60))
+                    .andExpect(status().isConflict())
+                    .andExpect(jsonPath("$.detail").value(containsString("already processed")));
+        } finally {
+            docker.unpauseContainerCmd(redisContainer.getContainerId()).exec();
+        }
+
+        assertThat(subscriberColumn("plan_data_used_mb")).isEqualTo(60);
+    }
+
+    // SOAP: real HTTP calls to /ws, because MockMvc doesn't reach the SOAP servlet
+
+    @Test
+    void soapStartWithoutKeyIsClientFault() {
+        ResponseEntity<String> answer = soap(null, SOAP_START);
+
+        assertThat(answer.getStatusCode().value()).isEqualTo(400);
+        assertThat(answer.getHeaders().getContentType().isCompatibleWith(MediaType.TEXT_XML)).isTrue();
+        assertThat(answer.getBody()).contains("<faultcode>SOAP-ENV:Client</faultcode>", "Idempotency-Key");
+        assertThat(count("charging_session")).isZero();
+    }
+
+    @Test
+    void soapStartRetryIsReplayedAndRunsOnce() {
+        String key = newKey();
+
+        ResponseEntity<String> first = soap(key, SOAP_START);
+        ResponseEntity<String> second = soap(key, SOAP_START);
+
+        assertThat(first.getStatusCode().value()).isEqualTo(200);
+        assertThat(first.getHeaders().getFirst(IdempotencyFilter.REPLAYED_HEADER)).isNull();
+        assertThat(second.getStatusCode().value()).isEqualTo(200);
+        assertThat(second.getHeaders().getFirst(IdempotencyFilter.REPLAYED_HEADER)).isEqualTo("true");
+        assertThat(second.getBody()).isEqualTo(first.getBody());              // same sessionId, same grant
+        assertThat(count("charging_session")).isEqualTo(1);                  // the retry didn't open a 2nd session
+        assertThat(subscriberColumn("plan_data_reserved_mb")).isEqualTo(100);
+    }
+
+    @Test
+    void soapReadsDoNotNeedAKey() {
+        ResponseEntity<String> answer = soap(null, "<s:ListPlansRequest/>");
+
+        assertThat(answer.getStatusCode().value()).isEqualTo(200);
+        assertThat(answer.getBody()).contains("ListPlansResponse");
+    }
+
+    @Test
+    void soapSameKeyForAnotherOperationIsUnprocessable() {
+        String key = newKey();
+        assertThat(soap(key, SOAP_START).getStatusCode().value()).isEqualTo(200);
+
+        ResponseEntity<String> answer = soap(key, """
+                <s:ReleaseSessionRequest>
+                  <s:sessionId>00000000-0000-0000-0000-000000000000</s:sessionId>
+                  <s:requestNumber>1</s:requestNumber><s:usedMb>0</s:usedMb>
+                </s:ReleaseSessionRequest>""");
+
+        assertThat(answer.getStatusCode().value()).isEqualTo(422);
+        assertThat(answer.getBody()).contains("SOAP-ENV:Client", "different request");
+    }
+
+    @Test
+    void soapRetryWhileFirstStillRunsIsConflictWithRetryAfter() {
+        String key = newKey();
+        String hash = IdempotencyFilter.fingerprint("POST", "/ws",
+                soapEnvelope(SOAP_START).getBytes(StandardCharsets.UTF_8));
+        redis.opsForValue().set(IdempotencyStore.redisKey("anonymous", key),
+                "{\"state\":\"IN_PROGRESS\",\"requestHash\":\"" + hash + "\"}", Duration.ofSeconds(30));
+
+        ResponseEntity<String> answer = soap(key, SOAP_START);
+
+        assertThat(answer.getStatusCode().value()).isEqualTo(409);
+        assertThat(answer.getHeaders().getFirst("Retry-After")).isEqualTo("1");
+        assertThat(answer.getBody()).contains("SOAP-ENV:Client", "still being processed");
+        assertThat(count("charging_session")).isZero();
+    }
+
+    // POST /ws without throwing on 4xx/5xx, so the tests can look at faults
+    private ResponseEntity<String> soap(String key, String payload) {
+        return RestClient.create().post()
+                .uri("http://localhost:" + port + "/ws")
+                .contentType(MediaType.TEXT_XML)
+                .headers(headers -> {
+                    if (key != null) {
+                        headers.set(IdempotencyFilter.KEY_HEADER, key);
+                    }
+                })
+                .body(soapEnvelope(payload))
+                .exchange((request, response) -> ResponseEntity.status(response.getStatusCode())
+                        .headers(response.getHeaders())
+                        .body(new String(response.getBody().readAllBytes(), StandardCharsets.UTF_8)));
+    }
+
+    private static String soapEnvelope(String payload) {
+        return """
+                <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:s="%s">
+                  <soapenv:Body>%s</soapenv:Body>
+                </soapenv:Envelope>""".formatted(WebServiceConfig.NAMESPACE, payload);
     }
 
     private String startSession() throws Exception {

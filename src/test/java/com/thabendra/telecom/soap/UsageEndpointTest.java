@@ -29,7 +29,7 @@ import static org.springframework.ws.test.server.ResponseMatchers.xpath;
  * splitting across buckets, pay as you go, fair usage throttling and the speed policy returned.
  * Skipped when Docker isn't running.
  */
-@SpringBootTest
+@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)   // same in every class: one shared context
 @AutoConfigureMockMvc   // same context as the other integration tests, so containers are shared
 @Import(TestcontainersConfig.class)
 @Testcontainers(disabledWithoutDocker = true)

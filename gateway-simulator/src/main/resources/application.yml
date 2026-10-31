@@ -6,6 +6,7 @@ spring:
 simulator:
   backend-url: http://localhost:8080
   client-id: pgw-colombo-01      # sent as X-Client-Id: idempotency keys are scoped per gateway
+  protocol: REST                 # REST (/charging/v1/sessions) or SOAP (/ws StartSession/UpdateSession/ReleaseSession)
   msisdn: "94771234567"
   app: YOUTUBE                   # YOUTUBE, WHATSAPP, FACEBOOK or GENERAL (what DPI detected)
   chunk-mb: 100                  # MB asked for in every request
@@ -13,3 +14,11 @@ simulator:
   used-percent: 100              # how much of each grant the user really uses
   final-used-mb: 37              # usage reported in the release
   replay-each-request: false     # send every request twice with the same key to show idempotent replay
+  retry:                         # section I
+    max-retries: 3               # RT-1: 4 tries in total
+    base-backoff: 100ms          # RT-2: 100, 200, 400 ms ... (each wait is random 0..backoff, RT-3)
+    max-backoff: 1s
+    per-try-timeout: 200ms       # RT-8: connect + read timeout of one try
+    total-budget: 1500ms         # RT-8: all tries and waits must fit in this, then fail open
+    failures-to-open: 5          # RT-9: failed tries in a row that open the circuit
+    open-for: 10s                # RT-9: fail open at once for this long, then try one call

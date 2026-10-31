@@ -32,7 +32,7 @@ import static org.springframework.ws.test.server.ResponseMatchers.xpath;
  * Online charging over SOAP against Oracle: the same ChargingService as the REST API, reached
  * through StartSession / UpdateSession / ReleaseSession. Skipped when Docker isn't running.
  */
-@SpringBootTest
+@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)   // same in every class: one shared context
 @AutoConfigureMockMvc   // same context as the other integration tests, so containers are shared
 @Import(TestcontainersConfig.class)
 @Testcontainers(disabledWithoutDocker = true)

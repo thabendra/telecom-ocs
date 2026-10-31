@@ -7,11 +7,19 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 public record SimulatorProperties(
         String backendUrl,
         String clientId,
+        Protocol protocol,
         String msisdn,
         String app,
         long chunkMb,
         int maxUpdates,
         int usedPercent,
         long finalUsedMb,
-        boolean replayEachRequest) {
+        boolean replayEachRequest,
+        RetryPolicy retry) {
+
+    /** Which backend API the gateway calls; both carry the same charging operations. */
+    public enum Protocol {
+        REST,
+        SOAP
+    }
 }

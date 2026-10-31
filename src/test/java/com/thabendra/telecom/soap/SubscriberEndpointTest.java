@@ -30,7 +30,7 @@ import static org.springframework.ws.test.server.ResponseMatchers.xpath;
  * XSD validation, Flyway migrations, JPA and the CHANGE_PLAN PL/SQL procedure.
  * Skipped when Docker isn't running.
  */
-@SpringBootTest
+@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)   // same in every class: one shared context
 @AutoConfigureMockMvc   // same context as the other integration tests, so containers are shared
 @Import(TestcontainersConfig.class)
 @Testcontainers(disabledWithoutDocker = true)

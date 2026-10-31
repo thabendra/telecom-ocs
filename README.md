@@ -128,6 +128,13 @@ update / release, package purchase and top-up:
 | Same key while the first is still running | `409` + `Retry-After: 1` |
 | First request ended in a `5xx` | nothing stored, the retry runs again |
 
+The SOAP charging operations get the same protection. All SOAP calls are `POST /ws`, so the filter
+reads the operation inside `soapenv:Body`: `StartSessionRequest`, `UpdateSessionRequest` and
+`ReleaseSessionRequest` need the key (set in `telecom.idempotency.soap-operations`); reads such as
+`GetQuota` don't. A SOAP caller gets a SOAP Client fault instead of problem JSON, with the same HTTP
+status (`400` / `409` + `Retry-After` / `422`). SOAP faults are HTTP `500`, so like any `5xx`
+they aren't stored and a retry runs again (safe: Oracle's request numbers still apply).
+
 Keys are per caller (`X-Client-Id` header, e.g. `pgw-colombo-01`). Every Redis key has a TTL.
 Redis holds only request state: balances and charges live in Oracle. If Redis is down the
 request still runs and layer 2 still protects charging.
@@ -144,13 +151,51 @@ Every request has its own `Idempotency-Key`, the gateway's `X-Client-Id` and a g
 
 ```bash
 mvn -f gateway-simulator/pom.xml spring-boot:run
+mvn -f gateway-simulator/pom.xml spring-boot:run -Dspring-boot.run.arguments="--simulator.protocol=SOAP"
 mvn -f gateway-simulator/pom.xml spring-boot:run -Dspring-boot.run.arguments="--simulator.app=WHATSAPP --simulator.max-updates=30"
 mvn -f gateway-simulator/pom.xml spring-boot:run -Dspring-boot.run.arguments="--simulator.replay-each-request=true"
 ```
 
 `replay-each-request` sends every request twice with the same key, like a retry after a timeout,
-and fails if the backend doesn't replay the first answer. Settings are in
+and fails if the backend doesn't replay the first answer (REST and SOAP). Settings are in
 `gateway-simulator/src/main/resources/application.yml`.
+
+### REST or SOAP
+
+The simulator only talks to the `ChargingClient` interface; `simulator.protocol` picks the transport:
+
+```
+GatewaySimulator ──► ChargingClient (interface)
+                          ▲
+             RetryingChargingClient   (section I retry policy, wraps either one)
+                          │
+              ┌───────────┴───────────┐
+     RestChargingClient       SoapChargingClient
+   /charging/v1/sessions     /ws StartSession / UpdateSession / ReleaseSession
+```
+
+Both turn their errors into one `BackendCallException` (status 0 = no answer, otherwise the HTTP
+status; a SOAP Client fault counts as 400, a Server fault as 500), so the retry rules are the same.
+Both protocols send the `Idempotency-Key`, and the backend replays both, so a retried start never
+opens a second session.
+
+### Retry policy (section I)
+
+Every call goes through `RetryingCaller`:
+
+| Rule | Behaviour |
+|---|---|
+| Tries | First try + at most **3 retries**, each with the same `Idempotency-Key` and body |
+| Retried | Timeouts, connection errors, `502` / `503` / `504`, `429`, and `409` with `Retry-After` (still in progress) |
+| Not retried | Any other answer (`400`, `401`, `403`, `404`, `422`, `500`, `409` "already processed") |
+| Wait | Full jitter: random(0, backoff), backoff 100 ms → 200 ms → 400 ms … capped at 1 s; never less than `Retry-After` |
+| Time limits | 200 ms per try (connect + read), **1.5 s** for all tries and waits together |
+| Circuit breaker | 5 failed tries in a row (network errors or 5xx) open it for 10 s: calls fail open at once |
+| Metrics | `gateway.retries`, `gateway.retries.succeeded`, `gateway.retries.exhausted`, `gateway.circuit.rejected` (printed at the end of a run) |
+
+When the retries, the time budget or the open circuit give up, the simulator **fails open**: it
+lets the user's traffic through and would charge it later, instead of blocking a paying customer
+because the backend is slow.
 
 ## SOAP operations
 
@@ -211,8 +256,12 @@ mvn test
 - `ChargingControllerTest` (REST) and `ChargingEndpointTest` (SOAP): online charging against Oracle:
   grants per bucket, reserve → commit, DENY + BLOCK, session errors.
 - `IdempotencyTest`: retries against Oracle + Redis: replay, 400 / 422 / 409, keys per client, TTL,
-  and the Oracle request-number check when Redis has lost the key.
-- `gateway-simulator`: `GatewaySimulatorTest` checks the simulator's requests against a mocked backend.
+  two copies of a request at the same moment run once, and the Oracle request-number check when
+  Redis has lost the key or is unreachable (the Redis container is paused).
+- `gateway-simulator`: `GatewaySimulatorTest` checks the simulator's requests against a mocked backend;
+  `ChargingClientRetryTest` checks the retry policy (backoff, jitter, budget, circuit breaker, metrics);
+  `SoapChargingClientTest` and `RestChargingClientTest` check each protocol client, and
+  `ChargingClientsTest` the choice between them.
 - `UsageEndpointTest`: usage charging against Oracle: app packages, add-ons, splitting across buckets,
   pay as you go, fair usage throttling, quota order and plan data refill.
 
