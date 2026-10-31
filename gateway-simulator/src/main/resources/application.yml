@@ -2,10 +2,27 @@ spring:
   main:
     web-application-type: none   # command line app
     banner-mode: off
+  # SE-1: this gateway's certificate + private key, and the only CA it trusts for the backend
+  # (TEST-ONLY files from scripts/generate-dev-certs.sh, run from the project root)
+  ssl:
+    bundle:
+      jks:
+        gateway:
+          key:
+            alias: ${GATEWAY_CERT:pgw-colombo-01}
+          keystore:
+            location: ${TLS_DIR:file:../certs}/${GATEWAY_CERT:pgw-colombo-01}.p12
+            password: ${TLS_KEYSTORE_PASSWORD:changeit}
+            type: PKCS12
+          truststore:
+            location: ${TLS_DIR:file:../certs}/gateway-ca-truststore.p12
+            password: ${TLS_TRUSTSTORE_PASSWORD:changeit}
+            type: PKCS12
 
 simulator:
-  backend-url: http://localhost:8080
-  client-id: pgw-colombo-01      # sent as X-Client-Id: idempotency keys are scoped per gateway
+  backend-url: https://localhost:8443   # the backend's gateway port (mTLS)
+  tls-bundle: gateway            # empty = plain HTTP (no client certificate)
+  client-id: pgw-colombo-01      # sent as X-Client-Id; with mTLS the backend uses the certificate name instead
   protocol: REST                 # REST (/charging/v1/sessions) or SOAP (/ws StartSession/UpdateSession/ReleaseSession)
   msisdn: "94771234567"
   app: YOUTUBE                   # YOUTUBE, WHATSAPP, FACEBOOK or GENERAL (what DPI detected)

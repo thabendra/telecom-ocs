@@ -102,6 +102,41 @@ Gateway                                  Backend (CHARGING PL/SQL package, V7)
 - A report above the grant is capped at the grant (the gateway never lets more through).
 - Every procedure locks the subscriber row first, so charging for one subscriber runs one at a time.
 
+## Gateway security: mTLS on its own port (SE-1)
+
+The application has two doors:
+
+```
+Gateways ──mTLS──► :8443  /charging/**  and  /ws (SOAP)    server.port, client-auth: need
+Customers/admin ─► :8080  /api/**                           telecom.public-port, plain HTTP for now
+```
+
+- **Port 8443 (gateway port)** needs a client certificate signed by our private CA. A missing,
+  expired or foreign certificate fails in the TLS handshake, before any code runs.
+- **Who is calling** comes from the certificate: Spring Security reads its name (`CN=pgw-colombo-01`)
+  and lets it in only if it is on `telecom.gateways.allowed`; a valid certificate with another name
+  gets `403`. That name also scopes the idempotency keys, so an `X-Client-Id` header can't borrow
+  another gateway's keys.
+- **Each API only on its own door** (`PortRuleFilter`): the gateway API on 8080, or the public API
+  on 8443, answers `404`.
+
+The certificates are test-only and are created by a script (they are not in git):
+
+```bash
+scripts/generate-dev-certs.sh   # certs/: dev CA, backend cert for localhost, gateway certs, bad certs for tests
+```
+
+| File in `certs/` | Used by |
+|---|---|
+| `backend.p12` | backend key store: its certificate + private key for the gateway port |
+| `gateway-ca-truststore.p12` | trust store with only the dev CA (backend and gateways) |
+| `pgw-colombo-01.p12`, `pgw-kandy-01.p12` | gateway key stores (allowed gateways) |
+| `pgw-unknown-99.p12` | signed by our CA but not allowed (`403`) |
+| `pgw-expired.p12`, `stranger.p12` | expired / signed by another CA (handshake fails) |
+
+In production the files come from a secret store (`TLS_DIR`, `TLS_KEYSTORE_PASSWORD`,
+`TLS_TRUSTSTORE_PASSWORD`), and revoking a single gateway (SE-6) is a later step.
+
 ## Safe retries: idempotency
 
 A gateway that times out doesn't know if its request was charged, so it retries. Two layers make
@@ -159,6 +194,11 @@ mvn -f gateway-simulator/pom.xml spring-boot:run -Dspring-boot.run.arguments="--
 `replay-each-request` sends every request twice with the same key, like a retry after a timeout,
 and fails if the backend doesn't replay the first answer (REST and SOAP). Settings are in
 `gateway-simulator/src/main/resources/application.yml`.
+
+The simulator calls the gateway port `https://localhost:8443` with the certificate
+`certs/pgw-colombo-01.p12` (`simulator.tls-bundle: gateway`; another gateway with
+`GATEWAY_CERT=pgw-kandy-01`). It trusts only the dev CA and checks that the backend's certificate
+is for `localhost`.
 
 ### REST or SOAP
 
@@ -230,27 +270,37 @@ because the backend is slow.
 ## Run locally
 
 ```bash
+scripts/generate-dev-certs.sh # test certificates for the gateway port (once)
 docker compose up -d          # Oracle Database Free (ready in about a minute) + Redis
-mvn spring-boot:run           # Flyway creates the tables, seed data and the procedures
+mvn spring-boot:run           # gateway port 8443 (mTLS) + public port 8080; Flyway creates the schema
 ```
 
-Open the WSDL at http://localhost:8080/ws/subscribers.wsdl, or import it into SoapUI / Postman.
-Sample requests are in `requests/`:
+The SOAP API (WSDL at https://localhost:8443/ws/subscribers.wsdl) is on the gateway port, so a
+client needs a gateway certificate, e.g. in SoapUI the key store `certs/pgw-colombo-01.p12`
+(password `changeit`). Sample requests are in `requests/`:
 
 ```bash
-curl -s -H "Content-Type: text/xml" -d @requests/create-subscriber.xml http://localhost:8080/ws
-curl -s -H "Content-Type: text/xml" -d @requests/activate-package.xml http://localhost:8080/ws
-curl -s -H "Content-Type: text/xml" -d @requests/record-usage.xml http://localhost:8080/ws
+TLS="--cert-type P12 --cert certs/pgw-colombo-01.p12:changeit --cacert certs/ca.pem"
+curl -s $TLS -H "Content-Type: text/xml" -d @requests/create-subscriber.xml https://localhost:8443/ws
+curl -s $TLS -H "Content-Type: text/xml" -d @requests/activate-package.xml https://localhost:8443/ws
+curl -s $TLS -H "Content-Type: text/xml" -d @requests/record-usage.xml https://localhost:8443/ws
+curl -s $TLS -H "Content-Type: text/xml" -H "Idempotency-Key: $(uuidgen)" \
+     -d @requests/start-session.xml https://localhost:8443/ws
 curl -s http://localhost:8080/api/subscribers/94771234567/quota
 ```
 
 ## Tests
 
 ```bash
+scripts/generate-dev-certs.sh   # once: the tests use the certificates in certs/
 mvn test
 ```
 
 - `SubscriberServiceTest`, `OracleErrorsTest`: unit tests with Mockito, including mapping of Oracle errors.
+- `GatewayTlsTest`: real HTTPS on both ports: allowed gateway over REST and SOAP, no certificate,
+  foreign CA and expired certificate (handshake fails), not-allowed gateway (`403`), each API refused
+  on the other port (`404`). MockMvc tests skip TLS and send a gateway certificate with
+  `TestCerts.gateway(...)`.
 - `SubscriberEndpointTest`: SOAP tests against a real Oracle container (Testcontainers): XSD validation,
   faults, plan change and the audit table.
 - `ChargingControllerTest` (REST) and `ChargingEndpointTest` (SOAP): online charging against Oracle:
@@ -260,10 +310,11 @@ mvn test
   Redis has lost the key or is unreachable (the Redis container is paused).
 - `gateway-simulator`: `GatewaySimulatorTest` checks the simulator's requests against a mocked backend;
   `ChargingClientRetryTest` checks the retry policy (backoff, jitter, budget, circuit breaker, metrics);
-  `SoapChargingClientTest` and `RestChargingClientTest` check each protocol client, and
-  `ChargingClientsTest` the choice between them.
+  `SoapChargingClientTest` and `RestChargingClientTest` check each protocol client,
+  `ChargingClientsTest` the choice between them, and `GatewayHttpTest` the HTTPS client with the
+  gateway certificate.
 - `UsageEndpointTest`: usage charging against Oracle: app packages, add-ons, splitting across buckets,
   pay as you go, fair usage throttling, quota order and plan data refill.
 
-All integration tests share one Oracle and one Redis container (`TestcontainersConfig`), and are
+All integration tests share one Oracle and one Redis container (`@IntegrationTest`, `TestcontainersConfig`), and are
 skipped when Docker isn't running.

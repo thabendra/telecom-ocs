@@ -2,17 +2,15 @@ package com.thabendra.telecom.idempotency;
 
 import com.github.dockerjava.api.DockerClient;
 import com.jayway.jsonpath.JsonPath;
+import com.thabendra.telecom.IntegrationTest;
+import com.thabendra.telecom.TestCerts;
 import com.thabendra.telecom.TestData;
-import com.thabendra.telecom.TestcontainersConfig;
 import com.thabendra.telecom.soap.WebServiceConfig;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
-import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
-import org.springframework.context.annotation.Import;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -20,9 +18,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
-import org.springframework.web.client.RestClient;
 import org.testcontainers.containers.GenericContainer;
-import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
@@ -49,10 +45,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * check still stops a double charge when Redis has lost the key or can't be reached (TE-3).
  * Skipped when Docker isn't running.
  */
-@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)   // same in every class: one shared context
-@AutoConfigureMockMvc
-@Import(TestcontainersConfig.class)
-@Testcontainers(disabledWithoutDocker = true)
+@IntegrationTest
 class IdempotencyTest {
 
     private static final String MSISDN = "94771234567";
@@ -92,7 +85,8 @@ class IdempotencyTest {
 
     @Test
     void missingKeyIsBadRequestAndNothingRuns() throws Exception {
-        mvc.perform(post("/charging/v1/sessions").contentType(MediaType.APPLICATION_JSON).content(START_BODY))
+        mvc.perform(post("/charging/v1/sessions").contentType(MediaType.APPLICATION_JSON).content(START_BODY)
+                        .with(TestCerts.gateway(TestCerts.COLOMBO)))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.detail").value(containsString("Idempotency-Key")));
 
@@ -156,8 +150,7 @@ class IdempotencyTest {
         String key = newKey();
         perform(startRequest(key)).andExpect(status().isCreated());
 
-        perform(post("/api/subscribers/{msisdn}/top-ups", MSISDN).contentType(MediaType.APPLICATION_JSON)
-                        .header(IdempotencyFilter.KEY_HEADER, key).content("{\"amount\":50.00}"))
+        perform(updateRequest(key, "00000000-0000-0000-0000-000000000000", 1, 0))
                 .andExpect(status().isUnprocessableEntity());
     }
 
@@ -166,7 +159,7 @@ class IdempotencyTest {
         String key = newKey();
         String hash = IdempotencyFilter.fingerprint("POST", "/charging/v1/sessions",
                 START_BODY.getBytes(StandardCharsets.UTF_8));
-        redis.opsForValue().set(IdempotencyStore.redisKey("anonymous", key),
+        redis.opsForValue().set(IdempotencyStore.redisKey(TestCerts.COLOMBO, key),
                 "{\"state\":\"IN_PROGRESS\",\"requestHash\":\"" + hash + "\"}", Duration.ofSeconds(30));
 
         perform(startRequest(key))
@@ -198,23 +191,33 @@ class IdempotencyTest {
     }
 
     @Test
-    void keysAreSeparatePerClient() throws Exception {
+    void keysAreSeparatePerGatewayCertificate() throws Exception {
         String key = newKey();
 
-        String a = sessionIdOf(perform(startRequest(key).header(IdempotencyFilter.CLIENT_HEADER, "pgw-colombo-01")));
-        String b = sessionIdOf(perform(startRequest(key).header(IdempotencyFilter.CLIENT_HEADER, "pgw-kandy-01")));
+        String a = sessionIdOf(perform(startRequest(key)));                                        // pgw-colombo-01
+        String b = sessionIdOf(perform(startRequest(key).with(TestCerts.gateway(TestCerts.KANDY))));
 
         assertThat(a).isNotEqualTo(b);
         assertThat(count("charging_session")).isEqualTo(2);
     }
 
     @Test
-    void storedResultExpires() throws Exception {
+    void clientIdHeaderCannotBorrowAnotherGatewaysKeys() throws Exception {   // SE-1: the name comes from the cert
         String key = newKey();
-        perform(startRequest(key).header(IdempotencyFilter.CLIENT_HEADER, "pgw-colombo-01"))
+
+        perform(startRequest(key).header(IdempotencyFilter.CLIENT_HEADER, TestCerts.KANDY))
                 .andExpect(status().isCreated());
 
-        Long ttl = redis.getExpire(IdempotencyStore.redisKey("pgw-colombo-01", key));
+        assertThat(redis.hasKey(IdempotencyStore.redisKey(TestCerts.COLOMBO, key))).isTrue();
+        assertThat(redis.hasKey(IdempotencyStore.redisKey(TestCerts.KANDY, key))).isFalse();
+    }
+
+    @Test
+    void storedResultExpires() throws Exception {
+        String key = newKey();
+        perform(startRequest(key)).andExpect(status().isCreated());
+
+        Long ttl = redis.getExpire(IdempotencyStore.redisKey(TestCerts.COLOMBO, key));
         assertThat(ttl).isBetween(1L, Duration.ofHours(24).toSeconds());
     }
 
@@ -276,7 +279,7 @@ class IdempotencyTest {
         assertThat(subscriberColumn("plan_data_used_mb")).isEqualTo(60);
     }
 
-    // SOAP: real HTTP calls to /ws, because MockMvc doesn't reach the SOAP servlet
+    // SOAP: real HTTPS calls to /ws on the gateway port, because MockMvc doesn't reach the SOAP servlet
 
     @Test
     void soapStartWithoutKeyIsClientFault() {
@@ -332,7 +335,7 @@ class IdempotencyTest {
         String key = newKey();
         String hash = IdempotencyFilter.fingerprint("POST", "/ws",
                 soapEnvelope(SOAP_START).getBytes(StandardCharsets.UTF_8));
-        redis.opsForValue().set(IdempotencyStore.redisKey("anonymous", key),
+        redis.opsForValue().set(IdempotencyStore.redisKey(TestCerts.COLOMBO, key),
                 "{\"state\":\"IN_PROGRESS\",\"requestHash\":\"" + hash + "\"}", Duration.ofSeconds(30));
 
         ResponseEntity<String> answer = soap(key, SOAP_START);
@@ -343,20 +346,17 @@ class IdempotencyTest {
         assertThat(count("charging_session")).isZero();
     }
 
-    // POST /ws without throwing on 4xx/5xx, so the tests can look at faults
+    // POST /ws with pgw-colombo-01's certificate, without throwing on 4xx/5xx, so the tests can look at faults
     private ResponseEntity<String> soap(String key, String payload) {
-        return RestClient.create().post()
-                .uri("http://localhost:" + port + "/ws")
+        return TestCerts.exchange(TestCerts.https(port, TestCerts.COLOMBO).post()
+                .uri("/ws")
                 .contentType(MediaType.TEXT_XML)
                 .headers(headers -> {
                     if (key != null) {
                         headers.set(IdempotencyFilter.KEY_HEADER, key);
                     }
                 })
-                .body(soapEnvelope(payload))
-                .exchange((request, response) -> ResponseEntity.status(response.getStatusCode())
-                        .headers(response.getHeaders())
-                        .body(new String(response.getBody().readAllBytes(), StandardCharsets.UTF_8)));
+                .body(soapEnvelope(payload)));
     }
 
     private static String soapEnvelope(String payload) {
@@ -370,13 +370,16 @@ class IdempotencyTest {
         return sessionIdOf(perform(startRequest(newKey())).andExpect(status().isCreated()));
     }
 
+    // charging calls come from pgw-colombo-01's certificate unless a test adds another one after it
     private MockHttpServletRequestBuilder startRequest(String key) {
         return post("/charging/v1/sessions").contentType(MediaType.APPLICATION_JSON)
+                .with(TestCerts.gateway(TestCerts.COLOMBO))
                 .header(IdempotencyFilter.KEY_HEADER, key).content(START_BODY);
     }
 
     private MockHttpServletRequestBuilder updateRequest(String key, String sessionId, long requestNumber, long usedMb) {
         return post("/charging/v1/sessions/{id}/update", sessionId).contentType(MediaType.APPLICATION_JSON)
+                .with(TestCerts.gateway(TestCerts.COLOMBO))
                 .header(IdempotencyFilter.KEY_HEADER, key)
                 .content("{\"requestNumber\":%d,\"usedMb\":%d,\"requestedMb\":100}".formatted(requestNumber, usedMb));
     }

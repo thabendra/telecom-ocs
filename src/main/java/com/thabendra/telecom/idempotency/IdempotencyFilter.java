@@ -11,6 +11,9 @@ import org.springframework.dao.DataAccessException;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
+import org.springframework.security.authentication.AnonymousAuthenticationToken;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Component;
 import org.springframework.util.AntPathMatcher;
 import org.springframework.web.filter.OncePerRequestFilter;
@@ -37,7 +40,8 @@ import java.util.regex.Pattern;
  *   <li>ID-2/3: the first request runs and its response is stored; the same key again replays it</li>
  *   <li>ID-4: same key with a different method, path or body gives 422</li>
  *   <li>ID-5: a retry while the first request is still running gives 409 + Retry-After</li>
- *   <li>ID-6: keys are per caller (X-Client-Id header until gateway certificates give an identity)</li>
+ *   <li>ID-6: keys are per caller: the gateway's certificate name on the mTLS port (it can't be faked;
+ *       an X-Client-Id header is then ignored), otherwise the X-Client-Id header until CU / PR logins</li>
  *   <li>ID-7: results are kept in Redis for resultTtl</li>
  *   <li>ID-9: only 2xx/4xx are stored; after a 5xx the key is dropped so the caller can retry</li>
  * </ul>
@@ -98,9 +102,7 @@ public class IdempotencyFilter extends OncePerRequestFilter {
                     KEY_HEADER + " must be 1 to 100 letters, digits, '.', '_' or '-'");
             return;
         }
-        String clientId = Optional.ofNullable(request.getHeader(CLIENT_HEADER))
-                .filter(id -> VALID_TOKEN.matcher(id).matches())
-                .orElse(ANONYMOUS_CLIENT);
+        String clientId = callerOf(request);
 
         String requestHash = fingerprint(request.getMethod(), pathOf(request), cached.body());
         String redisKey = IdempotencyStore.redisKey(clientId, key);
@@ -208,6 +210,17 @@ public class IdempotencyFilter extends OncePerRequestFilter {
         response.setStatus(status.value());
         response.setContentType(MediaType.TEXT_XML_VALUE + ";charset=UTF-8");
         response.getOutputStream().write(fault.getBytes(StandardCharsets.UTF_8));
+    }
+
+    // Spring Security runs first, so a gateway's certificate name is already in the security context
+    private static String callerOf(HttpServletRequest request) {
+        Authentication caller = SecurityContextHolder.getContext().getAuthentication();
+        if (caller != null && caller.isAuthenticated() && !(caller instanceof AnonymousAuthenticationToken)) {
+            return caller.getName();
+        }
+        return Optional.ofNullable(request.getHeader(CLIENT_HEADER))
+                .filter(id -> VALID_TOKEN.matcher(id).matches())
+                .orElse(ANONYMOUS_CLIENT);
     }
 
     private boolean isSoap(HttpServletRequest request) {

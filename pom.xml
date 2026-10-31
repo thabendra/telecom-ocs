@@ -61,6 +61,11 @@
             <groupId>org.flywaydb</groupId>
             <artifactId>flyway-database-oracle</artifactId>
         </dependency>
+        <!-- SE-1: X.509 client certificate authentication on the gateway port -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-security</artifactId>
+        </dependency>
 
         <dependency>
             <groupId>org.springframework.boot</groupId>
@@ -70,6 +75,11 @@
         <dependency>
             <groupId>org.springframework.ws</groupId>
             <artifactId>spring-ws-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.security</groupId>
+            <artifactId>spring-security-test</artifactId>
             <scope>test</scope>
         </dependency>
         <dependency>

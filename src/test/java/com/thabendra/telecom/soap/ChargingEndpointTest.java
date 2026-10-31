@@ -1,21 +1,17 @@
 package com.thabendra.telecom.soap;
 
+import com.thabendra.telecom.IntegrationTest;
 import com.thabendra.telecom.TestData;
-import com.thabendra.telecom.TestcontainersConfig;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
-import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.ApplicationContext;
-import org.springframework.context.annotation.Import;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.ws.test.server.MockWebServiceClient;
 import org.springframework.ws.test.server.ResponseActions;
 import org.springframework.xml.transform.StringResult;
 import org.springframework.xml.transform.StringSource;
-import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -32,10 +28,7 @@ import static org.springframework.ws.test.server.ResponseMatchers.xpath;
  * Online charging over SOAP against Oracle: the same ChargingService as the REST API, reached
  * through StartSession / UpdateSession / ReleaseSession. Skipped when Docker isn't running.
  */
-@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)   // same in every class: one shared context
-@AutoConfigureMockMvc   // same context as the other integration tests, so containers are shared
-@Import(TestcontainersConfig.class)
-@Testcontainers(disabledWithoutDocker = true)
+@IntegrationTest
 class ChargingEndpointTest {
 
     private static final Map<String, String> NS = Map.of("s", WebServiceConfig.NAMESPACE);

@@ -1,21 +1,18 @@
 package com.thabendra.telecom.charging;
 
 import com.jayway.jsonpath.JsonPath;
+import com.thabendra.telecom.IntegrationTest;
+import com.thabendra.telecom.TestCerts;
 import com.thabendra.telecom.TestData;
-import com.thabendra.telecom.TestcontainersConfig;
 import com.thabendra.telecom.idempotency.IdempotencyFilter;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.context.annotation.Import;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
-import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.math.BigDecimal;
 import java.util.HashMap;
@@ -32,10 +29,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * reserve -> commit, reserved quota hidden from other sessions, DENY when nothing is left.
  * Skipped when Docker isn't running.
  */
-@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)   // same in every class: one shared context
-@AutoConfigureMockMvc
-@Import(TestcontainersConfig.class)
-@Testcontainers(disabledWithoutDocker = true)
+@IntegrationTest
 class ChargingControllerTest {
 
     private static final String MSISDN = "94771234567";
@@ -213,15 +207,18 @@ class ChargingControllerTest {
                 .andExpect(status().isCreated());
     }
 
-    // every call gets a new Idempotency-Key, like a gateway sending a new request
+    // every call gets a new Idempotency-Key, like a gateway sending a new request, and comes from
+    // pgw-colombo-01's certificate (the charging API is gateway only)
     private ResultActions start(String app, long requestedMb) throws Exception {
         return mvc.perform(post("/charging/v1/sessions").contentType(MediaType.APPLICATION_JSON)
+                .with(TestCerts.gateway(TestCerts.COLOMBO))
                 .header(IdempotencyFilter.KEY_HEADER, UUID.randomUUID().toString())
                 .content("{\"msisdn\":\"%s\",\"app\":\"%s\",\"requestedMb\":%d}".formatted(MSISDN, app, requestedMb)));
     }
 
     private ResultActions update(String sessionId, long usedMb, long requestedMb) throws Exception {
         return mvc.perform(post("/charging/v1/sessions/{id}/update", sessionId).contentType(MediaType.APPLICATION_JSON)
+                .with(TestCerts.gateway(TestCerts.COLOMBO))
                 .header(IdempotencyFilter.KEY_HEADER, UUID.randomUUID().toString())
                 .content("{\"requestNumber\":%d,\"usedMb\":%d,\"requestedMb\":%d}"
                         .formatted(nextRequestNumber(sessionId), usedMb, requestedMb)));
@@ -229,6 +226,7 @@ class ChargingControllerTest {
 
     private ResultActions release(String sessionId, long usedMb) throws Exception {
         return mvc.perform(post("/charging/v1/sessions/{id}/release", sessionId).contentType(MediaType.APPLICATION_JSON)
+                .with(TestCerts.gateway(TestCerts.COLOMBO))
                 .header(IdempotencyFilter.KEY_HEADER, UUID.randomUUID().toString())
                 .content("{\"requestNumber\":%d,\"usedMb\":%d}".formatted(nextRequestNumber(sessionId), usedMb)));
     }

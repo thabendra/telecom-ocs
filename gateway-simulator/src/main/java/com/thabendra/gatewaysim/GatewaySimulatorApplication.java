@@ -4,13 +4,15 @@ import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
+import org.springframework.boot.ssl.SslBundle;
+import org.springframework.boot.ssl.SslBundles;
 import org.springframework.context.annotation.Bean;
-import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.web.client.RestClient;
 
 import java.time.Clock;
@@ -44,14 +46,14 @@ public class GatewaySimulatorApplication {
         return new RetryingCaller(props.retry(), duration -> Thread.sleep(duration), Clock.systemUTC(), metrics);
     }
 
-    // REST or SOAP from simulator.protocol, wrapped with the retry policy; the simulator only sees the interface
+    // REST or SOAP from simulator.protocol, wrapped with the retry policy; the simulator only sees the interface.
+    // Both protocols share one HTTP client: per-try timeout (RT-8) and, with simulator.tls-bundle, mTLS (SE-1).
     @Bean
-    ChargingClient chargingClient(RestClient.Builder builder, SimulatorProperties props, RetryingCaller caller) {
-        // RT-8: one try may not take longer than the per-try timeout (both protocols use this HTTP client)
-        SimpleClientHttpRequestFactory timeouts = new SimpleClientHttpRequestFactory();
-        timeouts.setConnectTimeout(props.retry().perTryTimeout());
-        timeouts.setReadTimeout(props.retry().perTryTimeout());
-        return ChargingClients.create(props, builder.requestFactory(timeouts), caller);
+    ChargingClient chargingClient(RestClient.Builder builder, SimulatorProperties props, RetryingCaller caller,
+                                  SslBundles sslBundles, @Value("${simulator.tls-bundle:}") String tlsBundle) {
+        SslBundle tls = tlsBundle.isBlank() ? null : sslBundles.getBundle(tlsBundle);
+        return ChargingClients.create(props,
+                builder.requestFactory(GatewayHttp.requestFactory(props.retry().perTryTimeout(), tls)), caller);
     }
 
     @Bean

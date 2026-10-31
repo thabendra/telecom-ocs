@@ -18,11 +18,43 @@ spring:
       host: ${REDIS_HOST:localhost}
       port: ${REDIS_PORT:6379}
       timeout: 500ms
+  # SE-1: the gateway port's certificate and the only CA it trusts (TEST-ONLY files from
+  # scripts/generate-dev-certs.sh; in production these come from a secret store)
+  ssl:
+    bundle:
+      jks:
+        gateway-port:
+          key:
+            alias: backend
+          keystore:
+            location: ${TLS_DIR:file:certs}/backend.p12
+            password: ${TLS_KEYSTORE_PASSWORD:changeit}
+            type: PKCS12
+          truststore:
+            location: ${TLS_DIR:file:certs}/gateway-ca-truststore.p12
+            password: ${TLS_TRUSTSTORE_PASSWORD:changeit}
+            type: PKCS12
 
+# Two doors (SE-1 + SE-8):
+#   server.port         gateway API, mTLS: a client certificate from our CA is required
+#   telecom.public-port customer / admin API, plain HTTP (JWT login comes with CU / PR)
 server:
-  port: 8080
+  port: ${GATEWAY_PORT:8443}
+  ssl:
+    bundle: gateway-port
+    client-auth: need          # no valid client certificate -> the TLS handshake fails
 
 telecom:
+  public-port: ${PUBLIC_PORT:8080}
+  gateways:
+    # served only on the gateway port; refused on the public port (and the other way round)
+    paths:
+      - /charging/**
+      - /ws/**
+    # certificate names (CN) of the gateways allowed in; a valid certificate with another name gets 403
+    allowed:
+      - pgw-colombo-01
+      - pgw-kandy-01
   idempotency:
     # write calls that must carry an Idempotency-Key header (ID-1)
     paths:
