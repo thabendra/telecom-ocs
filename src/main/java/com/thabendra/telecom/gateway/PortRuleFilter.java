@@ -1,10 +1,10 @@
 package com.thabendra.telecom.gateway;
 
+import com.thabendra.telecom.web.FilterOrder;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
-import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
 import org.springframework.util.AntPathMatcher;
@@ -19,7 +19,7 @@ import java.io.IOException;
  * Runs before Spring Security.
  */
 @Component
-@Order(Ordered.HIGHEST_PRECEDENCE + 10)
+@Order(FilterOrder.PORT_RULE)
 public class PortRuleFilter extends OncePerRequestFilter {
 
     private final ServerPorts ports;

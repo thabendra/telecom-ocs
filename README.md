@@ -216,6 +216,48 @@ request still runs and layer 2 still protects charging.
 stored under a unique `(session_id, request_number)` key, so even if Redis has lost a key the same
 request fails with `409` instead of charging again.
 
+## Rate limiting and overload (group 4)
+
+Each request passes the filters in this order (`web/FilterOrder.java`):
+
+```
+PortRuleFilter     right door?                         404
+Spring Security    who is calling?                     401 / 403
+RateLimitFilter    token left for this gateway?        429 + Retry-After   (RL-1, RL-2)
+IdempotencyFilter  replay, or run once                 400 / 409 / 422
+ConcurrencyLimit   free database slot in this copy?    503 + Retry-After   (RL-4)
+controller / SOAP endpoint -> Oracle
+```
+
+**Token bucket per gateway (RL-1, RD-3).** Every gateway has one bucket in Redis
+(`ratelimit:{gateway}`): up to `capacity` tokens (the burst), refilled at `refill-per-second` (the
+steady rate), one token per request. The refill is worked out when a request comes in, in one
+atomic Lua script (`redis/token-bucket.lua`) using Redis' clock, so all backend copies share one
+exact count and two copies can never both take the last token. An empty bucket answers `429` with
+`Retry-After` (a SOAP fault for SOAP callers); the gateway's retry policy waits and tries again.
+Retries count too, so a retry storm is limited as well. Limits per gateway can be overridden.
+
+**Redis down (RD-6).** Rate limiting never stops traffic because Redis is down: each copy then
+counts in memory with its share, `limit / instances`. Set `instances` (`MAX_INSTANCES`) to the most
+copies the autoscaler can start, so all copies together never go above the limit.
+
+**Database bulkhead (RL-4).** Each copy runs at most `max-in-flight` requests at the same moment, the
+same number as its connection pool (`DB_POOL_SIZE`, one setting for both). A request that finds no
+free slot within 50 ms gets `503` + `Retry-After` at once, instead of waiting for a connection and
+holding a thread while Oracle is slow. The database itself only gets more load when copies are added,
+so size it as `pool size x most copies <= sessions Oracle can take` and cap the autoscaler.
+
+```yaml
+telecom:
+  rate-limit:
+    capacity: 2000            # burst per gateway
+    refill-per-second: 1000   # steady rate per gateway
+    instances: 3              # most backend copies (fallback share)
+    overrides: { pgw-kandy-01: { capacity: 500, refill-per-second: 250 } }
+    max-in-flight: 10         # = spring.datasource.hikari.maximum-pool-size
+    in-flight-wait: 50ms
+```
+
 ## Gateway simulator
 
 `gateway-simulator/` is a separate Spring Boot command line app that plays the network gateway: it
@@ -353,6 +395,11 @@ mvn test
   faults, plan change and the audit table.
 - `ChargingControllerTest` (REST) and `ChargingEndpointTest` (SOAP): online charging against Oracle:
   grants per bucket, reserve → commit, DENY + BLOCK, session errors.
+- `RateLimitTest`: the Lua bucket against real Redis (burst, refusal, refill, key TTL), `429` +
+  `Retry-After` over REST and SOAP, other gateways unaffected, a retry that would be replayed is
+  limited too, and charging keeps working on the local bucket while Redis is paused.
+  `LocalRateLimiterTest`, `GatewayRateLimiterTest` and `ConcurrencyLimitFilterTest` are unit tests
+  for the in-memory bucket, the fallback share and overrides, and the `503` bulkhead.
 - `IdempotencyTest`: retries against Oracle + Redis: replay, 400 / 422 / 409, keys per client, TTL,
   two copies of a request at the same moment run once, and the Oracle request-number check when
   Redis has lost the key or is unreachable (the Redis container is paused).

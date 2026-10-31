@@ -6,6 +6,9 @@ spring:
     url: ${DB_URL:jdbc:oracle:thin:@localhost:1521/FREEPDB1}
     username: ${DB_USERNAME:telecom}
     password: ${DB_PASSWORD:telecom}
+    hikari:
+      # one number for the pool and the RL-4 slots; rule: pool size x most backend copies <= Oracle sessions
+      maximum-pool-size: ${DB_POOL_SIZE:10}
   jpa:
     open-in-view: false
     hibernate:
@@ -67,6 +70,14 @@ telecom:
       jwk-set-uri: ${TOKEN_JWKS_URI:https://localhost:9443/oauth2/jwks}
       audience: charging-api
       scope: charging:write
+  # group 4: per-gateway token bucket in Redis (RL-1, RD-3) and the database bulkhead (RL-4)
+  rate-limit:
+    capacity: 2000                 # burst per gateway
+    refill-per-second: 1000        # steady rate per gateway
+    instances: ${MAX_INSTANCES:3}  # most backend copies (autoscaler max); used only while Redis is down (RD-6)
+    overrides: {}                  # e.g. pgw-kandy-01: { capacity: 500, refill-per-second: 250 }
+    max-in-flight: ${DB_POOL_SIZE:10}
+    in-flight-wait: 50ms
   idempotency:
     # write calls that must carry an Idempotency-Key header (ID-1)
     paths:

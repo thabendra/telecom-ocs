@@ -1,23 +1,24 @@
 package com.thabendra.telecom.idempotency;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.thabendra.telecom.web.ErrorResponses;
+import com.thabendra.telecom.web.FilterOrder;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.core.annotation.Order;
 import org.springframework.dao.DataAccessException;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
-import org.springframework.http.MediaType;
 import org.springframework.security.authentication.AnonymousAuthenticationToken;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Component;
 import org.springframework.util.AntPathMatcher;
 import org.springframework.web.filter.OncePerRequestFilter;
-import org.springframework.web.util.HtmlUtils;
 import org.springframework.web.util.ContentCachingResponseWrapper;
 
 import java.io.IOException;
@@ -25,8 +26,6 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
-import java.util.LinkedHashMap;
-import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.regex.Pattern;
@@ -53,6 +52,7 @@ import java.util.regex.Pattern;
  * stops a charging request from being charged twice.
  */
 @Component
+@Order(FilterOrder.IDEMPOTENCY)
 public class IdempotencyFilter extends OncePerRequestFilter {
 
     public static final String KEY_HEADER = "Idempotency-Key";
@@ -179,37 +179,10 @@ public class IdempotencyFilter extends OncePerRequestFilter {
         }
     }
 
+    // a SOAP caller gets a SOAP fault, a REST caller problem JSON; the HTTP status is the same
     private void problem(HttpServletRequest request, HttpServletResponse response, HttpStatus status, String detail)
             throws IOException {
-        if (isSoap(request)) {
-            soapFault(response, status, detail);
-            return;
-        }
-        Map<String, Object> body = new LinkedHashMap<>();
-        body.put("type", "about:blank");
-        body.put("title", status.getReasonPhrase());
-        body.put("status", status.value());
-        body.put("detail", detail);
-        body.put("instance", pathOf(request));
-        response.setStatus(status.value());
-        response.setContentType(MediaType.APPLICATION_PROBLEM_JSON_VALUE);
-        json.writeValue(response.getOutputStream(), body);
-    }
-
-    // a SOAP caller can read a fault, not problem JSON; the HTTP status still says 400 / 409 / 422
-    private static void soapFault(HttpServletResponse response, HttpStatus status, String detail) throws IOException {
-        String fault = """
-                <SOAP-ENV:Envelope xmlns:SOAP-ENV="http://schemas.xmlsoap.org/soap/envelope/">
-                  <SOAP-ENV:Body>
-                    <SOAP-ENV:Fault>
-                      <faultcode>SOAP-ENV:Client</faultcode>
-                      <faultstring xml:lang="en">%s</faultstring>
-                    </SOAP-ENV:Fault>
-                  </SOAP-ENV:Body>
-                </SOAP-ENV:Envelope>""".formatted(HtmlUtils.htmlEscape(detail));
-        response.setStatus(status.value());
-        response.setContentType(MediaType.TEXT_XML_VALUE + ";charset=UTF-8");
-        response.getOutputStream().write(fault.getBytes(StandardCharsets.UTF_8));
+        ErrorResponses.write(request, response, status, detail, isSoap(request), json);
     }
 
     // Spring Security runs first, so a gateway's certificate name is already in the security context
