@@ -2,6 +2,7 @@ package com.thabendra.telecom.ratelimit;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DataAccessException;
 import org.springframework.stereotype.Component;
 
@@ -21,6 +22,8 @@ public class GatewayRateLimiter {
     private final LocalRateLimiter local;
     private final RateLimitProperties properties;
 
+    // two constructors: tell Spring which one is its own (the other is for tests with a fixed clock)
+    @Autowired
     public GatewayRateLimiter(RedisRateLimiter shared, RateLimitProperties properties) {
         this(shared, new LocalRateLimiter(Clock.systemUTC()), properties);
     }
