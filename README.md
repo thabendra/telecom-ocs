@@ -365,6 +365,53 @@ A new speed is used from the next charging grant.
 A logged-in customer is counted by number, not IP: many phones share one IP behind the mobile
 network's NAT. `X-Forwarded-For` is only believed from `trusted-proxies`.
 
+## Audit, metrics and Redis security (group 7, part 1)
+
+**Audit trail (OB-1).** `audit_event` (V10) gets a row for every charging decision and every command
+to the gateways. The database writes them itself, in the same transaction as the change, so no code
+path can skip one and a rolled-back request leaves none:
+
+| Event | Written by | Carries |
+|---|---|---|
+| `GRANT` / `DENY` | the CHARGING package (`audit_decision`) | gateway, session, requested / granted MB, bucket, speed |
+| `BLOCK` / `UNBLOCK` | trigger on `gateway_command` insert | target gateway, reason, speed, command id |
+| `ACKED` / `FAILED` | trigger on `gateway_command` status | the gateway (ACKED) or `system` |
+| `SUSPEND` / `UNSUSPEND` | trigger on `subscriber` status | the staff login (`status_changed_by`, V9) |
+
+The PL/SQL learns which gateway is calling from the Oracle client identifier: `AuditContext` sets it
+with `DBMS_SESSION.SET_IDENTIFIER` inside the charging transaction, the package reads
+`SYS_CONTEXT('USERENV', 'CLIENT_IDENTIFIER')`, and it is cleared again before the pooled connection
+serves anyone else. The table is append-only (a trigger refuses `UPDATE` / `DELETE`, ORA-20011) and
+partitioned by month (interval partitioning on `event_time`, UTC), so old months are dropped whole.
+Staff read it at `GET /api/subscribers/{msisdn}/audit?from=&to=&page=&size=` (newest first).
+
+**Metrics (OB-2)** are on a third, internal port: `http://localhost:8081/actuator/prometheus` and
+`/actuator/health` (Oracle + Redis). No login there, so it must only be reachable from the
+monitoring network; nothing of it is served on 8443 or 8080.
+
+| Metric | Shows |
+|---|---|
+| `http_server_requests_seconds_*` | requests per second, and p99 latency from the histogram buckets |
+| `ocs_charging_decisions_total{operation, result, gateway}` | grants and denies per gateway |
+| `ocs_ratelimit_rejected_total{api, caller}` | `429`s: gateway, ip, customer, staff |
+| `ocs_bulkhead_rejected_total`, `ocs_bulkhead_free_slots` | `503`s and free database slots |
+| `ocs_push_commands{status}` | gateway commands PENDING / SENT / FAILED |
+| `ocs_otp_sent_total`, `ocs_otp_checked_total{result}` | logins; many `wrong` = someone guessing |
+
+`docker compose` also starts Prometheus (`localhost:9090`) and Grafana (`localhost:3001`,
+admin / admin) with the "Telecom OCS" dashboard (`monitoring/`).
+
+**Redis is private (RD-9).** The compose Redis has no plain port, only TLS (certificate from the
+dev CA), and the users in `docker/redis/users.acl`: `default` is off, the backend's own user
+`telecom-ocs` may only touch its keys (`idem:*`, `ratelimit:*`, `otp:*`) and no dangerous commands
+(`FLUSHALL`, `KEYS`, `CONFIG`, ...), `ops` is for an operator with `redis-cli`. It is published on
+`127.0.0.1` only; in production it sits in a private subnet only the backend can reach. The backend
+connects with `spring.data.redis.username` / `password` and `ssl.bundle: redis-client`.
+
+```bash
+redis-cli --tls --cacert certs/ca.pem --user ops --pass dev-only-ops-password ping
+```
+
 ## Gateway simulator
 
 `gateway-simulator/` is a separate Spring Boot command line app that plays the network gateway: it
@@ -461,9 +508,9 @@ because the backend is slow.
 
 ```bash
 scripts/generate-dev-certs.sh          # test certificates (once)
-docker compose up -d                   # Oracle Database Free (ready in about a minute) + Redis + Keycloak
+docker compose up -d                   # Oracle (ready in about a minute), Redis (TLS), Keycloak, Prometheus, Grafana
 mvn -f token-server/pom.xml spring-boot:run   # token server on 9443
-mvn spring-boot:run                    # gateway port 8443 (mTLS + token) + public port 8080
+mvn spring-boot:run                    # gateway port 8443 (mTLS + token), public port 8080, management port 8081
 ```
 
 The SOAP API (WSDL at https://localhost:8443/ws/subscribers.wsdl) is on the gateway port, so a
@@ -551,6 +598,14 @@ mvn test
   with `TestUsers`; login SMS are caught by `TestSms`.
 - `PublicRateLimitTest`: `429` + `Retry-After` per IP, per customer and per staff login.
   `ClientAddressTest` (unit): when `X-Forwarded-For` is believed.
+- `AuditTest`: the audit trail against Oracle: GRANT with the calling gateway, DENY and a BLOCK per
+  gateway, one ACKED for two acks, SUSPEND / UNSUSPEND with the staff login, no row for a refused
+  request, `UPDATE` / `DELETE` refused, and the staff-only read API.
+- `MetricsTest`: real HTTP to the management port: the business counters and the latency histogram
+  in the Prometheus output, health with Oracle and Redis, and no actuator on 8443 or 8080.
+- `RedisSecurityTest`: its own Redis with the compose TLS + ACL setup: the backend's Lua scripts and
+  health check work, `FLUSHALL` / `KEYS` / other keys are `NOPERM`, no user, a wrong password or plain
+  text gets nothing. (The shared test Redis is a plain container.)
 - `UsageEndpointTest`: usage charging against Oracle: app packages, add-ons, splitting across buckets,
   pay as you go, fair usage throttling, quota order and plan data refill.
 

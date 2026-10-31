@@ -1,0 +1,3 @@
+user default off
+user telecom-ocs on >dev-only-redis-password ~idem:* ~ratelimit:* ~otp:* +@all -@dangerous +info
+user ops on >dev-only-ops-password ~* &* +@all

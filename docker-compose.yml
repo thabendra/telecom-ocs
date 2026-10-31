@@ -1,4 +1,4 @@
-# Local Oracle Database Free 23ai + Redis + Keycloak. Oracle's first start takes ~1 minute; the app user "telecom" is created automatically.
+# Local Oracle Database Free 23ai + Redis + Keycloak + Prometheus + Grafana. Oracle's first start takes ~1 minute; the app user "telecom" is created automatically.
 # Passwords here are local test values only.
 services:
   oracle:
@@ -17,11 +17,28 @@ services:
       timeout: 5s
       retries: 20
 
-  # idempotency store; data in Redis is short lived, Oracle holds balances and charges
+  # idempotency store, rate limit buckets, login codes; data in Redis is short lived, Oracle holds
+  # balances and charges. RD-9: TLS only (no plain port), and published on 127.0.0.1 only (in production:
+  # a private subnet only the backend can reach). Needs certs/redis.pem + redis-key.pem from
+  # scripts/generate-dev-certs.sh. Users in docker/redis/users.acl (Redis allows no comments in it):
+  #   default      off: nobody gets in without a user name and password
+  #   telecom-ocs  the backend: only its keys (idem:*, ratelimit:*, otp:*), no dangerous commands
+  #                (FLUSHALL, KEYS, CONFIG, DEBUG, ...); INFO allowed back for the health check
+  #   ops          an operator, for redis-cli; not used by any application
+  # TEST-ONLY passwords; in production they come from a secret store (as #<sha256>, not >plain text).
   redis:
     image: redis:7.4-alpine
+    command: >
+      redis-server --port 0 --tls-port 6379
+      --tls-cert-file /tls/redis.pem --tls-key-file /tls/redis-key.pem --tls-ca-cert-file /tls/ca.pem
+      --tls-auth-clients no --aclfile /etc/redis/users.acl
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - ./certs/redis.pem:/tls/redis.pem:ro
+      - ./certs/redis-key.pem:/tls/redis-key.pem:ro
+      - ./certs/ca.pem:/tls/ca.pem:ro
+      - ./docker/redis/users.acl:/etc/redis/users.acl:ro
 
   # PR-1: SSO for provider staff. Imports keycloak/telecom-realm.json (roles ADMIN / CARE_AGENT and two
   # test users); admin console at http://localhost:8180 (admin / admin, local test values only)
@@ -35,6 +52,27 @@ services:
       - "8180:8180"
     volumes:
       - ./keycloak:/opt/keycloak/data/import:ro
+
+  # OB-2: Prometheus reads the backend's management port (8081) on the host; Grafana shows it at
+  # http://localhost:3001 (admin / admin) with the "Telecom OCS" dashboard
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    ports:
+      - "127.0.0.1:9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  grafana:
+    image: grafana/grafana:11.3.1
+    ports:
+      - "127.0.0.1:3001:3000"
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: admin
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
 
 volumes:
   oracle-data:

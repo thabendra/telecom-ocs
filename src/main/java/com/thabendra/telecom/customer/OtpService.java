@@ -1,5 +1,6 @@
 package com.thabendra.telecom.customer;
 
+import com.thabendra.telecom.monitoring.OcsMetrics;
 import com.thabendra.telecom.subscriber.SubscriberRepository;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -37,15 +38,17 @@ public class OtpService {
     private final SmsSender sms;
     private final CustomerTokens tokens;
     private final CustomerProperties.Otp otp;
+    private final OcsMetrics metrics;
     private final SecureRandom random = new SecureRandom();
 
     public OtpService(StringRedisTemplate redis, SubscriberRepository subscribers, SmsSender sms,
-                      CustomerTokens tokens, CustomerProperties customers) {
+                      CustomerTokens tokens, CustomerProperties customers, OcsMetrics metrics) {
         this.redis = redis;
         this.subscribers = subscribers;
         this.sms = sms;
         this.tokens = tokens;
         this.otp = customers.otp();
+        this.metrics = metrics;
     }
 
     static String codeKey(String msisdn) {
@@ -72,11 +75,13 @@ public class OtpService {
         redis.expire(codeKey(msisdn), otp.ttl());
         sms.send(msisdn, "Your telecom-ocs login code is " + code + ". It works for "
                 + otp.ttl().toMinutes() + " minutes. Never share it with anyone.");
+        metrics.otpSent();
     }
 
     public CustomerTokens.IssuedToken verify(String msisdn, String code) {
         String result = redis.execute(VERIFY, List.of(codeKey(msisdn)),
                 hash(msisdn, code), String.valueOf(otp.maxAttempts()));
+        metrics.otpChecked(result == null ? "missing" : result.toLowerCase());
         if (!"OK".equals(result)) {
             throw new InvalidOtpException();   // WRONG, LOCKED or MISSING: the same answer to the caller
         }

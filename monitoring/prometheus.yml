@@ -1,0 +1,10 @@
+# OB-2: Prometheus reads the backend's numbers from its internal management port every 15 s.
+# The backend runs on the host (mvn spring-boot:run), so the container reaches it via host.docker.internal.
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: telecom-ocs
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets: ["host.docker.internal:8081"]

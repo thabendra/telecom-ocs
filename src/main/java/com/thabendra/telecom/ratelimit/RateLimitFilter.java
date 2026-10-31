@@ -2,6 +2,7 @@ package com.thabendra.telecom.ratelimit;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.thabendra.telecom.gateway.GatewayProperties;
+import com.thabendra.telecom.monitoring.OcsMetrics;
 import com.thabendra.telecom.web.ErrorResponses;
 import com.thabendra.telecom.web.FilterOrder;
 import jakarta.servlet.FilterChain;
@@ -33,12 +34,15 @@ public class RateLimitFilter extends OncePerRequestFilter {
     private final GatewayRateLimiter limiter;
     private final GatewayProperties gateways;
     private final ObjectMapper json;
+    private final OcsMetrics metrics;
     private final AntPathMatcher paths = new AntPathMatcher();
 
-    public RateLimitFilter(GatewayRateLimiter limiter, GatewayProperties gateways, ObjectMapper json) {
+    public RateLimitFilter(GatewayRateLimiter limiter, GatewayProperties gateways, ObjectMapper json,
+                           OcsMetrics metrics) {
         this.limiter = limiter;
         this.gateways = gateways;
         this.json = json;
+        this.metrics = metrics;
     }
 
     // only the gateway API; the public API has its own buckets per user / IP (PublicRateLimitFilter, PR-3)
@@ -58,6 +62,7 @@ public class RateLimitFilter extends OncePerRequestFilter {
         }
         Decision decision = limiter.tryAcquire(gateway);
         if (!decision.allowed()) {
+            metrics.rateLimited("gateway", "gateway");
             response.setHeader(HttpHeaders.RETRY_AFTER, String.valueOf(decision.retryAfterSeconds()));
             ErrorResponses.write(request, response, HttpStatus.TOO_MANY_REQUESTS,
                     "Rate limit for " + gateway + " exceeded, retry after the Retry-After seconds",

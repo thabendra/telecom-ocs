@@ -33,6 +33,7 @@ import static org.springframework.security.web.util.matcher.AntPathRequestMatche
  *   /api/admin/**                              ADMIN (packages, prices, speeds: PR-2)
  *   POST /api/subscribers                      staff (register a SIM)
  *   /api/subscribers/{msisdn}/suspension       staff (PR-2; pushes BLOCK / UNBLOCK, group 5)
+ *   GET  /api/subscribers/{msisdn}/audit       staff (OB-1: what happened to this number)
  *   POST /api/subscribers/{msisdn}/usage       ADMIN (test tool: usage as if from the network)
  *   /api/subscribers/{msisdn}/**               staff, or the customer whose number it is (CU-2)
  *   anything else                              nobody
@@ -61,6 +62,7 @@ public class PublicApiSecurity {
                         .requestMatchers(antMatcher("/api/admin/**")).hasRole(StaffTokens.ADMIN)
                         .requestMatchers(antMatcher(HttpMethod.POST, "/api/subscribers")).hasAnyRole(STAFF)
                         .requestMatchers(antMatcher("/api/subscribers/{msisdn}/suspension")).hasAnyRole(STAFF)
+                        .requestMatchers(antMatcher(HttpMethod.GET, "/api/subscribers/{msisdn}/audit")).hasAnyRole(STAFF)
                         .requestMatchers(antMatcher(HttpMethod.POST, "/api/subscribers/{msisdn}/usage"))
                         .hasRole(StaffTokens.ADMIN)
                         .requestMatchers(antMatcher("/api/subscribers/{msisdn}/**")).access(SubscriberAccess.ownerOrStaff())

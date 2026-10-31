@@ -1,5 +1,6 @@
 package com.thabendra.telecom;
 
+import org.springframework.boot.test.autoconfigure.actuate.observability.AutoConfigureObservability;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
@@ -19,8 +20,12 @@ import java.lang.annotation.Target;
  */
 @Target(ElementType.TYPE)
 @Retention(RetentionPolicy.RUNTIME)
-@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT, properties = "telecom.public-port=0")
+// the shared test Redis is a plain container (RedisSecurityTest checks TLS + ACL on its own one)
+@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
+        properties = {"telecom.public-port=0", "management.server.port=0", "spring.data.redis.ssl.enabled=false"})
 @AutoConfigureMockMvc
+// metrics export (Prometheus) is off in tests unless asked for; tracing stays off
+@AutoConfigureObservability(tracing = false)
 @Import({TestcontainersConfig.class, TestTokens.Decoder.class, TestSms.Config.class})
 @Testcontainers(disabledWithoutDocker = true)
 public @interface IntegrationTest {

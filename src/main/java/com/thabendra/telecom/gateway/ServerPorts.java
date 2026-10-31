@@ -32,10 +32,13 @@ public class ServerPorts implements WebServerFactoryCustomizer<TomcatServletWebS
         factory.addAdditionalTomcatConnectors(publicConnector);
     }
 
-    // getPort() is the main connector, i.e. server.port with its TLS settings
+    // getPort() is the main connector, i.e. server.port with its TLS settings. The management server
+    // (OB-2) is a second web server with its own event: its port is not the gateway port
     @Override
     public void onApplicationEvent(ServletWebServerInitializedEvent event) {
-        gatewayPort = event.getWebServer().getPort();
+        if (!"management".equals(event.getApplicationContext().getServerNamespace())) {
+            gatewayPort = event.getWebServer().getPort();
+        }
     }
 
     public int gatewayPort() {

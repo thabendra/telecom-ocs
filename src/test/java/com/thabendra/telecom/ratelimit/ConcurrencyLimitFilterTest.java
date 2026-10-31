@@ -1,6 +1,8 @@
 package com.thabendra.telecom.ratelimit;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.thabendra.telecom.monitoring.OcsMetrics;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import jakarta.servlet.FilterChain;
 import org.junit.jupiter.api.Test;
 import org.springframework.mock.web.MockHttpServletRequest;
@@ -20,7 +22,8 @@ import static org.assertj.core.api.Assertions.fail;
 class ConcurrencyLimitFilterTest {
 
     private final ConcurrencyLimitFilter filter = new ConcurrencyLimitFilter(
-            new RateLimitProperties(10, 10, 1, Map.of(), 1, Duration.ofMillis(50)), new ObjectMapper());
+            new RateLimitProperties(10, 10, 1, Map.of(), 1, Duration.ofMillis(50)), new ObjectMapper(),
+            new OcsMetrics(new SimpleMeterRegistry()));
 
     @Test
     void secondRequestWhileTheSlotIsTakenGets503AndTheSlotComesBack() throws Exception {

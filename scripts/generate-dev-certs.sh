@@ -6,6 +6,7 @@
 #   certs/gateway-ca-truststore.p12        trust store with only that CA (backend and gateways use it)
 #   certs/backend.p12                      backend server certificate for localhost / 127.0.0.1
 #   certs/token-server.p12                 token server (SE-2) certificate for localhost / 127.0.0.1
+#   certs/redis.pem + redis-key.pem        Redis TLS (RD-9) certificate for localhost / redis, PEM for redis-server
 #   certs/pgw-colombo-01.p12 (.pem)        gateway client certificates
 #   certs/pgw-kandy-01.p12   (.pem)
 #   certs/pgw-unknown-99.p12 (.pem)        signed by our CA, but not in telecom.gateways.allowed (403)
@@ -50,6 +51,9 @@ keytool -importcert -noprompt -alias ca -file "$DIR/ca.pem" -keystore "$DIR/gate
 
 issue backend "CN=localhost, O=Telecom Dev" "SAN=dns:localhost,ip:127.0.0.1" ca -validity 825 -ext EKU=serverAuth
 issue token-server "CN=localhost, O=Telecom Dev Token Server" "SAN=dns:localhost,ip:127.0.0.1" ca -validity 825 -ext EKU=serverAuth
+issue redis "CN=redis, O=Telecom Dev" "SAN=dns:localhost,dns:redis,ip:127.0.0.1" ca -validity 825 -ext EKU=serverAuth
+# redis-server reads PEM files: the certificate is redis.pem already, the key comes out of the PKCS12
+openssl pkcs12 -in "$DIR/redis.p12" -nocerts -nodes -passin "pass:$PASS" | openssl pkey -out "$DIR/redis-key.pem"
 issue pgw-colombo-01 "CN=pgw-colombo-01, O=Telecom Dev" EKU=clientAuth ca -validity 825
 issue pgw-kandy-01 "CN=pgw-kandy-01, O=Telecom Dev" EKU=clientAuth ca -validity 825
 issue pgw-unknown-99 "CN=pgw-unknown-99, O=Telecom Dev" EKU=clientAuth ca -validity 825

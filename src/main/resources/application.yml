@@ -15,12 +15,19 @@ spring:
       ddl-auto: validate   # Flyway owns the schema
   flyway:
     enabled: true
-  # local Redis from docker-compose.yml: idempotency store only, Oracle stays the source of truth
+  # local Redis from docker-compose.yml (idempotency, rate limit buckets, login codes); Oracle stays the
+  # source of truth. RD-9: TLS, trusting only the dev CA, and the backend's own ACL user (TEST-ONLY
+  # password; from a secret store in production)
   data:
     redis:
       host: ${REDIS_HOST:localhost}
       port: ${REDIS_PORT:6379}
       timeout: 500ms
+      username: ${REDIS_USERNAME:telecom-ocs}
+      password: ${REDIS_PASSWORD:dev-only-redis-password}
+      ssl:
+        enabled: ${REDIS_TLS:true}
+        bundle: redis-client
   # SE-1: the gateway port's certificate and the only CA it trusts (TEST-ONLY files from
   # scripts/generate-dev-certs.sh; in production these come from a secret store)
   ssl:
@@ -33,6 +40,12 @@ spring:
             location: ${TLS_DIR:file:certs}/backend.p12
             password: ${TLS_KEYSTORE_PASSWORD:changeit}
             type: PKCS12
+          truststore:
+            location: ${TLS_DIR:file:certs}/gateway-ca-truststore.p12
+            password: ${TLS_TRUSTSTORE_PASSWORD:changeit}
+            type: PKCS12
+        # RD-9: Redis' certificate is from the dev CA too
+        redis-client:
           truststore:
             location: ${TLS_DIR:file:certs}/gateway-ca-truststore.p12
             password: ${TLS_TRUSTSTORE_PASSWORD:changeit}
@@ -52,6 +65,31 @@ server:
   ssl:
     bundle: gateway-port
     client-auth: need          # no valid client certificate -> the TLS handshake fails
+
+# OB-2: a third, internal door for health and metrics (Prometheus reads /actuator/prometheus).
+# Plain HTTP, no login: it must only be reachable from the monitoring network, never from the
+# gateways (VP-3 firewall) or the internet. Nothing of it is served on 8443 or 8080.
+management:
+  server:
+    port: ${MANAGEMENT_PORT:8081}
+    ssl:
+      enabled: false       # otherwise it would copy the gateway port's mTLS settings
+  endpoints:
+    web:
+      exposure:
+        include: health, info, prometheus, metrics
+  endpoint:
+    health:
+      show-details: always   # Oracle and Redis status, for whoever can reach this internal port
+  metrics:
+    tags:
+      application: telecom-ocs
+    distribution:
+      # buckets for p99 latency in Prometheus (histogram_quantile); 200 ms is the gateway's timeout per try
+      percentiles-histogram:
+        http.server.requests: true
+      slo:
+        http.server.requests: 50ms, 100ms, 200ms, 500ms
 
 telecom:
   public-port: ${PUBLIC_PORT:8080}

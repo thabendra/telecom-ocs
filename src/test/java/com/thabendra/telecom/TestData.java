@@ -22,6 +22,8 @@ public final class TestData {
             jdbc.update("DELETE FROM " + table);
         }
         jdbc.update("DELETE FROM data_package WHERE code LIKE ?", TEST_PACKAGE_PREFIX + "%");
+        // append-only (V10): DELETE is refused by a trigger; TRUNCATE is DDL, which tests may use
+        jdbc.execute("TRUNCATE TABLE audit_event");
         flushRedis(redis);
     }
 

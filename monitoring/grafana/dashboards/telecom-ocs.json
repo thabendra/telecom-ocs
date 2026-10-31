@@ -1,0 +1,62 @@
+{
+  "uid": "telecom-ocs",
+  "title": "Telecom OCS",
+  "schemaVersion": 39,
+  "refresh": "15s",
+  "time": { "from": "now-1h", "to": "now" },
+  "panels": [
+    {
+      "id": 1, "type": "timeseries", "title": "Requests per second",
+      "gridPos": { "x": 0, "y": 0, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "refId": "A", "legendFormat": "{{method}} {{uri}} {{status}}",
+        "expr": "sum by (method, uri, status) (rate(http_server_requests_seconds_count{application=\"telecom-ocs\"}[1m]))" }]
+    },
+    {
+      "id": 2, "type": "timeseries", "title": "p99 latency (gateway timeout per try: 200 ms)",
+      "gridPos": { "x": 12, "y": 0, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s" } },
+      "targets": [{ "refId": "A", "legendFormat": "{{uri}}",
+        "expr": "histogram_quantile(0.99, sum by (le, uri) (rate(http_server_requests_seconds_bucket{application=\"telecom-ocs\"}[5m])))" }]
+    },
+    {
+      "id": 3, "type": "timeseries", "title": "Charging decisions per second",
+      "gridPos": { "x": 0, "y": 8, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "refId": "A", "legendFormat": "{{result}} {{gateway}}",
+        "expr": "sum by (result, gateway) (rate(ocs_charging_decisions_total[1m]))" }]
+    },
+    {
+      "id": 4, "type": "timeseries", "title": "Rate limited (429) per second",
+      "gridPos": { "x": 12, "y": 8, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "refId": "A", "legendFormat": "{{api}} / {{caller}}",
+        "expr": "sum by (api, caller) (rate(ocs_ratelimit_rejected_total[1m]))" }]
+    },
+    {
+      "id": 5, "type": "timeseries", "title": "Database bulkhead: 503s and free slots",
+      "gridPos": { "x": 0, "y": 16, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "refId": "A", "legendFormat": "503 per second", "expr": "sum(rate(ocs_bulkhead_rejected_total[1m]))" },
+        { "refId": "B", "legendFormat": "free slots {{instance}}", "expr": "ocs_bulkhead_free_slots" }
+      ]
+    },
+    {
+      "id": 6, "type": "timeseries", "title": "Gateway commands by status",
+      "gridPos": { "x": 12, "y": 16, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "refId": "A", "legendFormat": "{{status}}", "expr": "max by (status) (ocs_push_commands)" }]
+    },
+    {
+      "id": 7, "type": "timeseries", "title": "Customer logins: codes checked per minute",
+      "gridPos": { "x": 0, "y": 24, "w": 24, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "refId": "A", "legendFormat": "{{result}}", "expr": "sum by (result) (rate(ocs_otp_checked_total[5m])) * 60" },
+        { "refId": "B", "legendFormat": "sent", "expr": "sum(rate(ocs_otp_sent_total[5m])) * 60" }
+      ]
+    }
+  ]
+}

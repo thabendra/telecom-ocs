@@ -2,6 +2,7 @@ package com.thabendra.telecom.ratelimit;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.thabendra.telecom.customer.CustomerTokens;
+import com.thabendra.telecom.monitoring.OcsMetrics;
 import com.thabendra.telecom.web.ErrorResponses;
 import com.thabendra.telecom.web.FilterOrder;
 import jakarta.servlet.FilterChain;
@@ -38,11 +39,14 @@ public class PublicRateLimitFilter extends OncePerRequestFilter {
     private final GatewayRateLimiter limiter;
     private final PublicRateLimitProperties limits;
     private final ObjectMapper json;
+    private final OcsMetrics metrics;
 
-    public PublicRateLimitFilter(GatewayRateLimiter limiter, PublicRateLimitProperties limits, ObjectMapper json) {
+    public PublicRateLimitFilter(GatewayRateLimiter limiter, PublicRateLimitProperties limits, ObjectMapper json,
+                                 OcsMetrics metrics) {
         this.limiter = limiter;
         this.limits = limits;
         this.json = json;
+        this.metrics = metrics;
     }
 
     @Override
@@ -55,14 +59,19 @@ public class PublicRateLimitFilter extends OncePerRequestFilter {
             throws ServletException, IOException {
         Authentication caller = SecurityContextHolder.getContext().getAuthentication();
         Decision decision;
+        String kind;
         if (isLoggedIn(caller) && has(caller, CustomerTokens.ROLE)) {
+            kind = "customer";
             decision = limiter.tryAcquire("user:" + caller.getName(), limits.customer());
         } else if (isLoggedIn(caller)) {
+            kind = "staff";
             decision = limiter.tryAcquire("staff:" + caller.getName(), limits.staff());
         } else {
+            kind = "ip";
             decision = limiter.tryAcquire("ip:" + ClientAddress.of(request, limits.trustedProxies()), limits.anonymous());
         }
         if (!decision.allowed()) {
+            metrics.rateLimited("public", kind);
             response.setHeader(HttpHeaders.RETRY_AFTER, String.valueOf(decision.retryAfterSeconds()));
             ErrorResponses.write(request, response, HttpStatus.TOO_MANY_REQUESTS,
                     "Too many requests, retry after the Retry-After seconds", false, json);

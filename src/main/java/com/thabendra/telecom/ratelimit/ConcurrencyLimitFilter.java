@@ -1,6 +1,7 @@
 package com.thabendra.telecom.ratelimit;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.thabendra.telecom.monitoring.OcsMetrics;
 import com.thabendra.telecom.web.ErrorResponses;
 import com.thabendra.telecom.web.FilterOrder;
 import jakarta.servlet.FilterChain;
@@ -32,11 +33,14 @@ public class ConcurrencyLimitFilter extends OncePerRequestFilter {
     private final Semaphore slots;
     private final long waitMs;
     private final ObjectMapper json;
+    private final OcsMetrics metrics;
 
-    public ConcurrencyLimitFilter(RateLimitProperties properties, ObjectMapper json) {
+    public ConcurrencyLimitFilter(RateLimitProperties properties, ObjectMapper json, OcsMetrics metrics) {
         this.slots = new Semaphore(properties.maxInFlight(), true);   // fair: first come, first served
         this.waitMs = properties.inFlightWait().toMillis();
         this.json = json;
+        this.metrics = metrics;
+        metrics.bulkheadSlots(slots::availablePermits);
     }
 
     /** Slots free right now (for tests and metrics). */
@@ -55,6 +59,7 @@ public class ConcurrencyLimitFilter extends OncePerRequestFilter {
             acquired = false;
         }
         if (!acquired) {
+            metrics.bulkheadRejected();
             response.setHeader(HttpHeaders.RETRY_AFTER, "1");
             ErrorResponses.write(request, response, HttpStatus.SERVICE_UNAVAILABLE,
                     "Too many requests in progress, retry after the Retry-After seconds",
