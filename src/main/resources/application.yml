@@ -130,6 +130,12 @@ telecom:
   charging:
     session-expiry: 65m        # CH-8: no update for this long (grant validity 1 h + 5 min) -> expired
     expire-sessions: true      # run the expiry every minute in this copy (safe in several copies)
+    # CH-5 / RL-3: grant sizes when the gateway leaves the size to us
+    grant:
+      default-mb: 100
+      heavy-mb: 250              # fewer updates for users who need a lot
+      heavy-threshold-mb: 2048   # 2 GB ...
+      heavy-window: 15m          # ... within the last 15 minutes = a heavy user (alert, never a block)
   # group 5: commands for the gateways (outbox in gateway_command, polled at /charging/v1/commands)
   push:
     ack-timeout: 10s       # no ack within this -> delivered again

@@ -1,0 +1,34 @@
+# Prometheus alert rules for telecom-ocs (loaded by monitoring/prometheus.yml). An alert tells a person to
+# look; none of these blocks a subscriber.
+groups:
+  - name: telecom-ocs
+    rules:
+      # RL-3: someone became a heavy user in the last 15 minutes (bigger grants now, never a block)
+      - alert: HeavyUsers
+        expr: increase(ocs_heavy_users_flagged_total[15m]) > 0
+        labels: { severity: info }
+        annotations:
+          summary: "{{ $value }} subscriber(s) became heavy users in the last 15 minutes"
+
+      # PU-4: a gateway stopped acking commands, so a BLOCK / UNBLOCK may not have been applied
+      - alert: GatewayCommandsFailed
+        expr: max(ocs_push_commands{status="FAILED"}) > 0
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $value }} gateway command(s) gave up after all deliveries"
+
+      # CH-8: gateways forgetting to release sessions (one now and then is normal, many is a gateway bug)
+      - alert: ManySessionsExpired
+        expr: increase(ocs_sessions_expired_total[1h]) > 100
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $value }} charging sessions expired in the last hour"
+
+      # RL-4: the database bulkhead is turning requests away
+      - alert: DatabaseBulkheadRejecting
+        expr: rate(ocs_bulkhead_rejected_total[5m]) > 1
+        for: 5m
+        labels: { severity: critical }
+        annotations:
+          summary: "Requests refused with 503 because no database slot was free"

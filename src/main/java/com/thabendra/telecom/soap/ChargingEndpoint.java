@@ -44,7 +44,7 @@ public class ChargingEndpoint implements ChargingApi<StartSessionRequest, StartS
     @ResponsePayload
     public StartSessionResponse startSession(@RequestPayload StartSessionRequest request) {
         ChargingService.Grant grant = service.startSession(request.getMsisdn(),
-                App.valueOf(request.getApp().value()), request.getRequestedMb());
+                App.valueOf(request.getApp().value()), mb(request.getRequestedMb()));
         StartSessionResponse response = new StartSessionResponse();
         response.setGrant(toContract(grant));
         return response;
@@ -56,7 +56,7 @@ public class ChargingEndpoint implements ChargingApi<StartSessionRequest, StartS
     public UpdateSessionResponse updateSession(@XPathParam("/s:UpdateSessionRequest/s:sessionId") String sessionId,
                                                @RequestPayload UpdateSessionRequest request) {
         ChargingService.Grant grant = service.updateSession(sessionId, request.getRequestNumber(),
-                request.getUsedMb(), request.getRequestedMb());
+                request.getUsedMb(), mb(request.getRequestedMb()));
         UpdateSessionResponse response = new UpdateSessionResponse();
         response.setGrant(toContract(grant));
         return response;
@@ -86,5 +86,10 @@ public class ChargingEndpoint implements ChargingApi<StartSessionRequest, StartS
         dto.setValiditySeconds(grant.validitySeconds());
         dto.setAction(grant.action() == null ? null : DenyAction.fromValue(grant.action().name()));
         return dto;
+    }
+
+    // requestedMb is optional (CH-5): left out = the backend picks the grant size
+    private static Long mb(Integer requestedMb) {
+        return requestedMb == null ? null : requestedMb.longValue();
     }
 }

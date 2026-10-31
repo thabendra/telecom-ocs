@@ -32,14 +32,18 @@ public class ChargingController implements ChargingApi<ChargingController.StartR
         this.service = service;
     }
 
+    /** requestedMb may be left out: then the backend picks the grant size (CH-5). */
     public record StartRequest(@NotNull @Pattern(regexp = "947\\d{8}") String msisdn,
                                @NotNull App app,
-                               @Min(1) @Max(MAX_CHUNK_MB) long requestedMb) {
+                               @Min(1) @Max(MAX_CHUNK_MB) Long requestedMb) {
     }
 
-    /** requestNumber: the gateway's counter for this session (start is 0, then 1, 2, ...). */
+    /**
+     * requestNumber: the gateway's counter for this session (start is 0, then 1, 2, ...).
+     * requestedMb: left out = the backend picks the size (CH-5); 0 = only report usage (REPORTED).
+     */
     public record UpdateRequest(@Min(1) long requestNumber, @Min(0) long usedMb,
-                                @Min(0) @Max(MAX_CHUNK_MB) long requestedMb) {
+                                @Min(0) @Max(MAX_CHUNK_MB) Long requestedMb) {
     }
 
     public record ReleaseRequest(@Min(1) long requestNumber, @Min(0) long usedMb) {

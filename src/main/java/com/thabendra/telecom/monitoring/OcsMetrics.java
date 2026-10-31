@@ -18,6 +18,7 @@ import java.util.function.Supplier;
  *   ocs_otp_sent_total, ocs_otp_checked_total{result}           logins; many "wrong" = someone guessing
  *   ocs_push_commands{status}                                   PENDING / SENT / FAILED commands (group 5)
  *   ocs_sessions_expired_total                                  sessions a gateway never released (CH-8)
+ *   ocs_heavy_users_flagged_total                               subscribers who became heavy users (RL-3)
  * </pre>
  * Tags only take values from small fixed sets (the allowed gateways, a few results), never a phone
  * number or IP: every tag value is a separate time series in Prometheus.
@@ -60,6 +61,13 @@ public class OcsMetrics {
         Gauge.builder("ocs.bulkhead.free.slots", freeSlots)
                 .description("Database slots free in this backend copy right now")
                 .register(registry);
+    }
+
+    /** RL-3: a subscriber just crossed the heavy-user threshold (an alert, never a block). */
+    public void heavyUserFlagged() {
+        Counter.builder("ocs.heavy.users.flagged")
+                .description("Subscribers who crossed the heavy-user threshold")
+                .register(registry).increment();
     }
 
     /** CH-8: sessions closed because their gateway stopped reporting. */

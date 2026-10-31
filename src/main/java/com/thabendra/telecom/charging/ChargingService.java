@@ -9,6 +9,7 @@ import com.thabendra.telecom.usage.UsageService.App;
 import io.micrometer.observation.Observation;
 import io.micrometer.observation.ObservationRegistry;
 import org.springframework.dao.DataAccessException;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -53,24 +54,33 @@ public class ChargingService {
     private final OcsMetrics metrics;
     private final ObservationRegistry observations;
     private final SessionCache cache;
+    private final GrantPolicy policy;
+    private final UsageWindow usage;
+    private final JdbcTemplate jdbc;
 
     public ChargingService(ChargingSessionRepository sessions, GatewayCommands commands, AuditContext audit,
-                           OcsMetrics metrics, ObservationRegistry observations, SessionCache cache) {
+                           OcsMetrics metrics, ObservationRegistry observations, SessionCache cache,
+                           GrantPolicy policy, UsageWindow usage, JdbcTemplate jdbc) {
         this.sessions = sessions;
         this.commands = commands;
         this.audit = audit;
         this.metrics = metrics;
         this.observations = observations;
         this.cache = cache;
+        this.policy = policy;
+        this.usage = usage;
+        this.jdbc = jdbc;
     }
 
-    // a DENY also queues BLOCK for every gateway (PU-1), in this same transaction
+    // a DENY also queues BLOCK for every gateway (PU-1), in this same transaction.
+    // requestedMb null: the gateway leaves the grant size to us (CH-5)
     @Transactional
-    public Grant startSession(String msisdn, App app, long requestedMb) {
+    public Grant startSession(String msisdn, App app, Long requestedMb) {
         String sessionId = UUID.randomUUID().toString();
+        long size = policy.size(msisdn, requestedMb, 0);
         // the PL/SQL writes GRANT / DENY into the audit trail with the calling gateway's name (OB-1)
-        Grant grant = toGrant(sessionId, requestedMb, inOracle("start", () -> audit.asCaller(
-                () -> call(() -> sessions.startSession(sessionId, msisdn, app.name(), requestedMb)))));
+        Grant grant = toGrant(sessionId, size, inOracle("start", () -> audit.asCaller(
+                () -> call(() -> sessions.startSession(sessionId, msisdn, app.name(), size)))));
         metrics.chargingDecision("start", grant.result() == Result.ALLOW, AuditContext.callerName());
         if (grant.result() == Result.DENY) {
             commands.blockOutOfQuota(msisdn);
@@ -82,11 +92,18 @@ public class ChargingService {
 
     // CH-7: only the gateway that started the session may update it (checked in the cache, then in Oracle)
     @Transactional
-    public Grant updateSession(String sessionId, long requestNumber, long usedMb, long requestedMb) {
+    public Grant updateSession(String sessionId, long requestNumber, long usedMb, Long requestedMb) {
         SessionCache.Owner owner = checkOwner(sessionId);
-        Grant grant = toGrant(sessionId, requestedMb, inOracle("update", () -> audit.asCaller(
-                () -> call(() -> sessions.updateSession(sessionId, requestNumber, usedMb, requestedMb)))));
-        if (requestedMb > 0) {   // asking for 0 MB (only reporting usage) is no decision, as in the audit
+        String msisdn = owner != null ? owner.msisdn() : msisdnOf(sessionId);
+        // the usage in this report counts for the heavy-user check already (RL-3)
+        long size = msisdn != null ? policy.size(msisdn, requestedMb, usedMb)
+                : (requestedMb != null ? requestedMb : 0);   // unknown session: Oracle answers 404
+        Grant grant = toGrant(sessionId, size, inOracle("update", () -> audit.asCaller(
+                () -> call(() -> sessions.updateSession(sessionId, requestNumber, usedMb, size)))));
+        if (msisdn != null) {
+            usage.add(msisdn, usedMb);
+        }
+        if (size > 0) {   // asking for 0 MB (only reporting usage) is no decision, as in the audit
             metrics.chargingDecision("update", grant.result() == Result.ALLOW, AuditContext.callerName());
         }
         if (grant.result() == Result.DENY) {
@@ -99,9 +116,13 @@ public class ChargingService {
 
     @Transactional
     public Release releaseSession(String sessionId, long requestNumber, long usedMb) {
-        checkOwner(sessionId);
+        SessionCache.Owner owner = checkOwner(sessionId);
         Long totalUsedMb = inOracle("release", () -> audit.asCaller(
                 () -> call(() -> sessions.releaseSession(sessionId, requestNumber, usedMb))));
+        String msisdn = owner != null ? owner.msisdn() : msisdnOf(sessionId);
+        if (msisdn != null) {
+            usage.add(msisdn, usedMb);
+        }
         cache.forget(sessionId);
         return new Release(sessionId, totalUsedMb);
     }
@@ -114,6 +135,14 @@ public class ChargingService {
             throw new NotFoundException("Charging session " + sessionId + " not found");
         }
         return owner;
+    }
+
+    // the session's subscriber when the cache doesn't know it; null for a session that doesn't exist
+    private String msisdnOf(String sessionId) {
+        return jdbc.query("""
+                        SELECT s.msisdn FROM charging_session c JOIN subscriber s ON s.id = c.subscriber_id
+                         WHERE c.id = ?""", (rs, i) -> rs.getString(1), sessionId)
+                .stream().findFirst().orElse(null);
     }
 
     // OB-3: the CHARGING procedure as its own span in the trace, so the time spent in Oracle shows apart
@@ -133,9 +162,9 @@ public class ChargingService {
         }
     }
 
-    private static Grant toGrant(String sessionId, long requestedMb, Map<String, Object> out) {
+    private static Grant toGrant(String sessionId, long askedMb, Map<String, Object> out) {
         long granted = number(out, "P_GRANTED_MB").longValue();
-        if (granted == 0 && requestedMb == 0) {
+        if (granted == 0 && askedMb == 0) {
             return new Grant(sessionId, Result.REPORTED, 0, null, null, null, null, null);
         }
         if (granted == 0) {

@@ -487,6 +487,28 @@ answered DENY and blocked the user on every gateway.
 `charging_session.end_reason` says how each session ended: `RELEASE`, `DENY` (nothing left at start) or
 `EXPIRED`.
 
+## Grant sizes and heavy users (group 9)
+
+**Grant size (CH-5).** `requestedMb` is optional in start and update (REST and SOAP). Left out, the
+backend picks it (`GrantPolicy`):
+
+| Case | Grant |
+|---|---|
+| the gateway asked for an amount | that amount, as before (`0` in an update = `REPORTED`) |
+| left to us, normal user | **100 MB** |
+| left to us, heavy user (RL-3) | **250 MB**: half as many updates for the same traffic |
+| little left in the bucket | what is left: a smaller final grant (`reserve` takes `LEAST(asked, left)`) |
+
+**Heavy users (RL-3).** `redis/usage-window.lua` keeps each subscriber's usage reports in a sorted set
+`usage:{msisdn}` scored by arrival time, and sums the last 15 minutes in one atomic step: a true
+sliding window, no bucket edge for a burst to hide behind. 2 GB or more in that window = heavy: bigger
+grants, `ocs_heavy_users_flagged_total` counts the moment someone crosses the line (once), and the log
+says so with the number masked (`9477123****`). Being heavy **never blocks**; the quota decides that, as
+for everybody. Without Redis nobody looks heavy, which only means normal grants.
+
+**Alerts.** `monitoring/alerts.yml` (loaded by Prometheus): new heavy users, gateway commands that
+failed, many expired sessions, and the database bulkhead refusing requests.
+
 ## Gateway simulator
 
 `gateway-simulator/` is a separate Spring Boot command line app that plays the network gateway: it
@@ -695,6 +717,11 @@ mvn test
 - `SessionExpiryTest`: a quiet session gives its quota back and charges nothing, an active one or one
   quiet for 30 minutes is kept (the time zone check), an expired one can't be updated, and a second run
   finds nothing new.
+- `GrantSizeTest`: 100 MB when the size is left to us, 250 MB for a heavy user, an asked amount
+  honoured, a smaller final grant, the report that crosses the line already getting the big grant, never
+  a block, the alert counted once, old usage sliding out, release usage counting. `GrantPolicyTest`
+  (unit) checks the rules with a faked window, also with Redis down; `ChargingEndpointTest` a SOAP start
+  without `requestedMb`.
 - `UsageEndpointTest`: usage charging against Oracle: app packages, add-ons, splitting across buckets,
   pay as you go, fair usage throttling, quota order and plan data refill.
 

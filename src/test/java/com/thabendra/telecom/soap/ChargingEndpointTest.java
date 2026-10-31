@@ -108,6 +108,19 @@ class ChargingEndpointTest {
     }
 
     @Test
+    void leftOutTheBackendPicksTheGrantSize() {   // CH-5: requestedMb is optional in the XSD
+        createSubscriber("100.00");
+
+        client.sendRequest(withPayload(payload("""
+                        <s:StartSessionRequest xmlns:s='%s'>
+                          <s:msisdn>%s</s:msisdn><s:app>GENERAL</s:app>
+                        </s:StartSessionRequest>""", MSISDN)))
+                .andExpect(noFault())
+                .andExpect(xpath("//s:grant/s:result", NS).evaluatesTo("ALLOW"))
+                .andExpect(xpath("//s:grant/s:grantedMb", NS).evaluatesTo(100));
+    }
+
+    @Test
     void chunkAboveLimitIsRejectedByXsd() {
         createSubscriber("100.00");
         start("GENERAL", 20000).andExpect(clientOrSenderFault());

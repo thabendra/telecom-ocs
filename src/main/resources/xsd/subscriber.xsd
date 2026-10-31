@@ -395,7 +395,10 @@
             <xs:sequence>
                 <xs:element name="msisdn" type="tns:Msisdn"/>
                 <xs:element name="app" type="tns:App"/>
-                <xs:element name="requestedMb">
+                <xs:element name="requestedMb" minOccurs="0">
+                    <xs:annotation>
+                        <xs:documentation>Left out: the backend picks the grant size (CH-5)</xs:documentation>
+                    </xs:annotation>
                     <xs:simpleType>
                         <xs:restriction base="tns:ChunkMb">
                             <xs:minInclusive value="1"/>
@@ -423,7 +426,11 @@
                         <xs:documentation>Used from the last grant; anything above the grant is not charged</xs:documentation>
                     </xs:annotation>
                 </xs:element>
-                <xs:element name="requestedMb" type="tns:ChunkMb"/>
+                <xs:element name="requestedMb" type="tns:ChunkMb" minOccurs="0">
+                    <xs:annotation>
+                        <xs:documentation>Left out: the backend picks the grant size (CH-5). 0: only report usage (REPORTED)</xs:documentation>
+                    </xs:annotation>
+                </xs:element>
             </xs:sequence>
         </xs:complexType>
     </xs:element>
