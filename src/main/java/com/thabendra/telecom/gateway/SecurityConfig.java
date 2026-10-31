@@ -27,7 +27,8 @@ import org.springframework.security.web.util.matcher.RequestMatcher;
  *       <li>the token has scope charging:write, or notify:read for the push channel (SE-5, PU-3)</li>
  *     </ol>
  *     The gateway name becomes the caller's identity.</li>
- *   <li>Everything else: open for now; customer and provider logins come with CU / PR.</li>
+ *   <li>Everything else (the public port): customer and staff logins, see
+ *       {@link com.thabendra.telecom.access.PublicApiSecurity} (group 6).</li>
  * </ul>
  * Machine calls carry no cookies and keep no session, so CSRF protection and sessions are off.
  */
@@ -47,15 +48,6 @@ public class SecurityConfig {
                         .hasAuthority("SCOPE_" + gateways.token().notifyScope())
                         // everything else is charging: charging:write
                         .anyRequest().hasAuthority("SCOPE_" + gateways.token().scope()))
-                .csrf(AbstractHttpConfigurer::disable)
-                .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS));
-        return http.build();
-    }
-
-    @Bean
-    @Order(2)
-    SecurityFilterChain publicApi(HttpSecurity http) throws Exception {
-        http.authorizeHttpRequests(auth -> auth.anyRequest().permitAll())
                 .csrf(AbstractHttpConfigurer::disable)
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS));
         return http.build();

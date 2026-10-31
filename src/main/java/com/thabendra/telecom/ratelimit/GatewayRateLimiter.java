@@ -11,7 +11,8 @@ import java.time.Clock;
 /**
  * One token bucket per gateway: shared in Redis (RL-1, RD-3), or, while Redis can't be reached, a local
  * bucket with this copy's share of the limit (RD-6). Rate limiting never blocks traffic just because
- * Redis is down; Redis only helps count.
+ * Redis is down; Redis only helps count. The public API's buckets per user and per IP (PR-3) use the
+ * same two-level counting through {@link #tryAcquire(String, RateLimitProperties.Limit)}.
  */
 @Component
 public class GatewayRateLimiter {
@@ -35,13 +36,17 @@ public class GatewayRateLimiter {
     }
 
     public Decision tryAcquire(String gateway) {
-        RateLimitProperties.Limit limit = properties.limitFor(gateway);
+        return tryAcquire(gateway, properties.limitFor(gateway));
+    }
+
+    /** Any bucket by name: a gateway, or "user:...", "staff:...", "ip:..." on the public API (PR-3). */
+    public Decision tryAcquire(String bucket, RateLimitProperties.Limit limit) {
         try {
-            return shared.tryAcquire(gateway, limit);
+            return shared.tryAcquire(bucket, limit);
         } catch (DataAccessException redisDown) {
             log.warn("Redis unavailable, rate limiting {} locally at 1/{} of its limit: {}",
-                    gateway, properties.instances(), redisDown.getMessage());
-            return local.tryAcquire(gateway, limit.share(properties.instances()));
+                    bucket, properties.instances(), redisDown.getMessage());
+            return local.tryAcquire(bucket, limit.share(properties.instances()));
         }
     }
 }

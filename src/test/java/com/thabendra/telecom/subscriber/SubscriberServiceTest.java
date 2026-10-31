@@ -60,10 +60,11 @@ class SubscriberServiceTest {
         Subscriber kamal = new Subscriber("94771234567", "Kamal Perera", "200012345678", BigDecimal.TEN, basic);
         when(subscribers.findByMsisdnForUpdate("94771234567")).thenReturn(Optional.of(kamal));
 
-        service.suspend("94771234567", Reason.FRAUD);
+        service.suspend("94771234567", Reason.FRAUD, "agent1");
 
         assertThat(kamal.getStatus()).isEqualTo(Subscriber.Status.SUSPENDED);
         verify(commands).block("94771234567", Reason.FRAUD);
+        verify(jdbc).update(anyString(), eq("agent1"), eq("94771234567"));   // PR-2: who did it
     }
 
     @Test
@@ -72,7 +73,7 @@ class SubscriberServiceTest {
         kamal.suspend();
         when(subscribers.findByMsisdnForUpdate("94771234567")).thenReturn(Optional.of(kamal));
 
-        assertThatThrownBy(() -> service.suspend("94771234567", Reason.SUSPENDED))
+        assertThatThrownBy(() -> service.suspend("94771234567", Reason.SUSPENDED, "agent1"))
                 .isInstanceOf(BusinessRuleException.class)
                 .hasMessageContaining("already suspended");
         verify(commands, never()).block(anyString(), any());
@@ -80,7 +81,7 @@ class SubscriberServiceTest {
 
     @Test
     void aTopUpIsNotASuspensionReason() {
-        assertThatThrownBy(() -> service.suspend("94771234567", Reason.TOP_UP))
+        assertThatThrownBy(() -> service.suspend("94771234567", Reason.TOP_UP, "agent1"))
                 .isInstanceOf(BusinessRuleException.class);
     }
 
@@ -90,7 +91,7 @@ class SubscriberServiceTest {
         kamal.suspend();
         when(subscribers.findByMsisdnForUpdate("94771234567")).thenReturn(Optional.of(kamal));
 
-        service.unsuspend("94771234567");
+        service.unsuspend("94771234567", "agent1");
 
         assertThat(kamal.getStatus()).isEqualTo(Subscriber.Status.ACTIVE);
         verify(commands).unblock("94771234567", Reason.UNSUSPENDED, 10240);

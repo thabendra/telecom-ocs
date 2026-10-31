@@ -5,6 +5,7 @@ import com.thabendra.telecom.IntegrationTest;
 import com.thabendra.telecom.TestCerts;
 import com.thabendra.telecom.TestData;
 import com.thabendra.telecom.TestTokens;
+import com.thabendra.telecom.TestUsers;
 import com.thabendra.telecom.idempotency.IdempotencyFilter;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -73,7 +74,8 @@ class PushCommandTest {
     void suspensionAndFraudBlockTheUser() throws Exception {
         createSubscriber("100.00");
 
-        mvc.perform(put("/api/subscribers/{msisdn}/suspension", MSISDN).contentType(MediaType.APPLICATION_JSON)
+        mvc.perform(put("/api/subscribers/{msisdn}/suspension", MSISDN).with(TestUsers.careAgent())
+                        .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"reason\":\"FRAUD\"}"))
                 .andExpect(status().isOk());
 
@@ -106,7 +108,8 @@ class PushCommandTest {
         runOutOfEverything();
         jdbc.update("UPDATE subscriber SET balance = 1000 WHERE msisdn = ?", MSISDN);   // money without a top-up
 
-        mvc.perform(post("/api/subscribers/{msisdn}/packages", MSISDN).contentType(MediaType.APPLICATION_JSON)
+        mvc.perform(post("/api/subscribers/{msisdn}/packages", MSISDN).with(TestUsers.admin())
+                        .contentType(MediaType.APPLICATION_JSON)
                         .header(IdempotencyFilter.KEY_HEADER, UUID.randomUUID().toString())
                         .content("{\"packageCode\":\"YT_UNLIMITED\"}"))
                 .andExpect(status().isCreated());
@@ -129,14 +132,16 @@ class PushCommandTest {
     @Test
     void topUpDoesNotLiftASuspensionButUnsuspendDoes() throws Exception {
         createSubscriber("100.00");
-        mvc.perform(put("/api/subscribers/{msisdn}/suspension", MSISDN).contentType(MediaType.APPLICATION_JSON)
+        mvc.perform(put("/api/subscribers/{msisdn}/suspension", MSISDN).with(TestUsers.careAgent())
+                        .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"reason\":\"SUSPENDED\"}"))
                 .andExpect(status().isOk());
 
         topUp("50.00");
         assertThat(latest("UNBLOCK")).isEmpty();
 
-        mvc.perform(delete("/api/subscribers/{msisdn}/suspension", MSISDN)).andExpect(status().isOk());
+        mvc.perform(delete("/api/subscribers/{msisdn}/suspension", MSISDN).with(TestUsers.careAgent()))
+                .andExpect(status().isOk());
         assertThat(latest("UNBLOCK")).hasSize(2).allSatisfy(command -> {
             assertThat(command.get("REASON")).isEqualTo("UNSUSPENDED");
             assertThat(((Number) command.get("BANDWIDTH_KBPS")).intValue()).isEqualTo(10240);   // BASIC plan
@@ -230,7 +235,7 @@ class PushCommandTest {
     }
 
     private void createSubscriber(String balance) throws Exception {
-        mvc.perform(post("/api/subscribers").contentType(MediaType.APPLICATION_JSON).content("""
+        mvc.perform(post("/api/subscribers").with(TestUsers.admin()).contentType(MediaType.APPLICATION_JSON).content("""
                         {"msisdn":"%s","fullName":"Kamal Perera","nic":"200012345678",
                          "planCode":"BASIC","initialBalance":%s}""".formatted(MSISDN, balance)))
                 .andExpect(status().isCreated());
@@ -253,7 +258,8 @@ class PushCommandTest {
     }
 
     private void topUp(String amount) throws Exception {
-        mvc.perform(post("/api/subscribers/{msisdn}/top-ups", MSISDN).contentType(MediaType.APPLICATION_JSON)
+        mvc.perform(post("/api/subscribers/{msisdn}/top-ups", MSISDN).with(TestUsers.customer(MSISDN))
+                        .contentType(MediaType.APPLICATION_JSON)
                         .header(IdempotencyFilter.KEY_HEADER, UUID.randomUUID().toString())
                         .content("{\"amount\":%s}".formatted(amount)))
                 .andExpect(status().isOk());

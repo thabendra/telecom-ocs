@@ -298,6 +298,73 @@ The `id` is the gateway's idempotency key: a command delivered again because its
 applied once and acked again. `SELECT ... FOR UPDATE SKIP LOCKED` lets two pollers of one gateway
 take different commands.
 
+## Customers and provider staff (group 6)
+
+The public port (8080) serves people, not gateways. Two kinds of people log in, each with a token of
+its own; the token's `iss` decides which checker reads it (`PublicApiSecurity`).
+
+```
+customer app ──POST /api/auth/otp──► SMS code ──POST /api/auth/otp/verify──► customer JWT (15 min)
+admin portal ──Keycloak login (SSO, code + PKCE)────────────────────────────► staff JWT (roles)
+```
+
+**Customer login (CU-1).** `POST /api/auth/otp {"msisdn":"94771234567"}` sends a 6-digit code by
+SMS (`SmsSender`; in dev `LoggingSmsSender` writes it to the log). `POST /api/auth/otp/verify
+{"msisdn":..., "code":...}` answers `{accessToken, tokenType, expiresIn}`, a JWT this backend signs
+itself (HS256, `sub` = the number, role `CUSTOMER`).
+
+| Guard | How |
+|---|---|
+| Code not readable from Redis | Redis keeps `HMAC(msisdn:code)` for 5 minutes, never the code |
+| Guessing | 5 wrong codes delete the code (`redis/otp-verify.lua`, one atomic step); a code works once |
+| SMS flooding | one new code per number per minute (`429` + `Retry-After`), plus the per-IP limit |
+| Finding customers | an unknown number gets the same `202`, just no SMS |
+| Someone else's number | `/api/subscribers/{msisdn}/**` needs the token's own number (`403` otherwise) |
+
+**Customer features (CU-2)**, with the customer token, for their own number only:
+`GET /quota`, `POST /top-ups`, `POST /packages` (both with `Idempotency-Key`), `PUT /plan`,
+`GET /usage?from=&to=&page=&size=` (usage history, newest first, 20 a page, at most 100).
+
+**Staff login (PR-1).** Keycloak (`docker compose`, realm `keycloak/telecom-realm.json`) signs the
+staff token; the backend checks it with Keycloak's public keys, `iss`, and `aud = telecom-ocs`, and
+takes only `ADMIN` / `CARE_AGENT` from `realm_access.roles`. The caller's name is
+`preferred_username`, which is recorded as "changed by".
+
+| | ADMIN | CARE_AGENT | Customer |
+|---|---|---|---|
+| Read a subscriber | any | any | own number only |
+| Register a SIM | yes | yes | no |
+| Suspend / unsuspend (pushes BLOCK / UNBLOCK, group 5) | yes | yes | no |
+| Catalog: packages, prices, speeds (`/api/admin/**`) | yes | no | no |
+
+**Catalog (PR-2)**, ADMIN only:
+
+```
+GET  /api/admin/packages                 every package, on sale or not
+POST /api/admin/packages                 create
+PUT  /api/admin/packages/{code}/price    {"price": 790.00}
+PUT  /api/admin/packages/{code}/speed    {"maxBandwidthKbps": 4096, "throttledBandwidthKbps": 512}
+PUT  /api/admin/packages/{code}/status   {"active": false}       stop / start selling
+GET  /api/admin/packages/{code}/prices   price history
+PUT  /api/admin/plans/{code}/speed       {"maxBandwidthKbps": 20480}
+```
+
+V9 adds `active`, `updated_by` / `updated_at`, `status_changed_by` on the subscriber, and the table
+`data_package_price`, filled by a trigger so no price change is missed. A package is never deleted;
+one that is no longer sold can't be bought (`ACTIVATE_PACKAGE`, ORA-20010) but works until it expires.
+A new speed is used from the next charging grant.
+
+**Rate limits (PR-3)** use the group 4 Lua token bucket with other keys:
+
+| Caller | Bucket | Limit |
+|---|---|---|
+| nobody logged in (login, catalog) | `ip:{address}` | 30 burst, 1 every 2 s |
+| customer | `user:{msisdn}` | 60 burst, 1 per s |
+| staff | `staff:{login}` | 200 burst, 10 per s |
+
+A logged-in customer is counted by number, not IP: many phones share one IP behind the mobile
+network's NAT. `X-Forwarded-For` is only believed from `trusted-proxies`.
+
 ## Gateway simulator
 
 `gateway-simulator/` is a separate Spring Boot command line app that plays the network gateway: it
@@ -375,23 +442,26 @@ because the backend is slow.
 
 ## REST endpoints
 
-| Method | Path |
-|---|---|
-| GET | `/api/plans` |
-| POST | `/api/subscribers` |
-| GET | `/api/subscribers/{msisdn}` |
-| POST | `/api/subscribers/{msisdn}/top-ups` |
-| PUT | `/api/subscribers/{msisdn}/plan` |
-| GET | `/api/packages` |
-| POST | `/api/subscribers/{msisdn}/packages` |
-| POST | `/api/subscribers/{msisdn}/usage` |
-| GET | `/api/subscribers/{msisdn}/quota` |
+| Method | Path | Who |
+|---|---|---|
+| POST | `/api/auth/otp`, `/api/auth/otp/verify` | anyone |
+| GET | `/api/plans`, `/api/packages` | anyone |
+| POST | `/api/subscribers` | staff |
+| GET | `/api/subscribers/{msisdn}` | staff, the customer |
+| POST | `/api/subscribers/{msisdn}/top-ups` | staff, the customer |
+| PUT | `/api/subscribers/{msisdn}/plan` | staff, the customer |
+| POST | `/api/subscribers/{msisdn}/packages` | staff, the customer |
+| GET | `/api/subscribers/{msisdn}/quota` | staff, the customer |
+| GET | `/api/subscribers/{msisdn}/usage` | staff, the customer |
+| PUT / DELETE | `/api/subscribers/{msisdn}/suspension` | staff |
+| POST | `/api/subscribers/{msisdn}/usage` | ADMIN (test tool) |
+| any | `/api/admin/**` | ADMIN |
 
 ## Run locally
 
 ```bash
 scripts/generate-dev-certs.sh          # test certificates (once)
-docker compose up -d                   # Oracle Database Free (ready in about a minute) + Redis
+docker compose up -d                   # Oracle Database Free (ready in about a minute) + Redis + Keycloak
 mvn -f token-server/pom.xml spring-boot:run   # token server on 9443
 mvn spring-boot:run                    # gateway port 8443 (mTLS + token) + public port 8080
 ```
@@ -409,7 +479,24 @@ curl -s $TLS -H "$AUTH" -H "Content-Type: text/xml" -d @requests/activate-packag
 curl -s $TLS -H "$AUTH" -H "Content-Type: text/xml" -d @requests/record-usage.xml https://localhost:8443/ws
 curl -s $TLS -H "$AUTH" -H "Content-Type: text/xml" -H "Idempotency-Key: $(uuidgen)" \
      -d @requests/start-session.xml https://localhost:8443/ws
-curl -s http://localhost:8080/api/subscribers/94771234567/quota
+```
+
+The public port needs a login (group 6). A customer, with the code from the backend's log:
+
+```bash
+curl -s -H "Content-Type: application/json" -d '{"msisdn":"94771234567"}' http://localhost:8080/api/auth/otp
+CUSTOMER=$(curl -s -H "Content-Type: application/json" -d '{"msisdn":"94771234567","code":"123456"}' \
+        http://localhost:8080/api/auth/otp/verify | sed 's/.*"accessToken":"\([^"]*\)".*/\1/')
+curl -s -H "Authorization: Bearer $CUSTOMER" http://localhost:8080/api/subscribers/94771234567/quota
+```
+
+A staff member (dev users `admin1` / `admin1` and `agent1` / `agent1` in the Keycloak realm; the
+password grant is enabled only for this kind of local testing, the admin portal uses code + PKCE):
+
+```bash
+STAFF=$(curl -s -d grant_type=password -d client_id=admin-portal -d username=admin1 -d password=admin1 \
+        http://localhost:8180/realms/telecom/protocol/openid-connect/token | sed 's/.*"access_token":"\([^"]*\)".*/\1/')
+curl -s -H "Authorization: Bearer $STAFF" http://localhost:8080/api/admin/packages
 ```
 
 ## Tests
@@ -453,6 +540,17 @@ mvn test
   `ChargingClientsTest` the choice between them, `CommandPollerTest` the push channel (apply once,
   ack, retry), `GatewayHttpTest` the HTTPS client with the
   gateway certificate, and `TokenClientTest` getting, caching and refreshing access tokens.
+- `CustomerLoginTest`: the SMS code login against Redis + Oracle with real customer tokens: own
+  number only (`403` for another), no staff APIs, `401` without a token or with a forged one, a code
+  works once, 5 wrong codes delete it, only its HMAC is in Redis, one code a minute, unknown numbers
+  get no SMS; top-up, package and the paged usage history with the customer's token.
+  `CustomerTokensTest` (unit): claims, role, foreign key, expiry, short secret.
+- `StaffAccessTest`: ADMIN / CARE_AGENT rules, creating, pricing (history by the V9 trigger), speeds,
+  stopping a sale (hidden, can't be bought), a plan speed used by UNBLOCK, and who suspended.
+  `StaffTokensTest` (unit): Keycloak roles and name, wrong audience or realm. MockMvc tests log in
+  with `TestUsers`; login SMS are caught by `TestSms`.
+- `PublicRateLimitTest`: `429` + `Retry-After` per IP, per customer and per staff login.
+  `ClientAddressTest` (unit): when `X-Forwarded-For` is believed.
 - `UsageEndpointTest`: usage charging against Oracle: app packages, add-ons, splitting across buckets,
   pay as you go, fair usage throttling, quota order and plan data refill.
 

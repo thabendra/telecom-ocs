@@ -12,6 +12,7 @@ import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 import org.springframework.http.HttpStatus;
+import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -25,7 +26,11 @@ import org.springframework.web.bind.annotation.RestController;
 import java.math.BigDecimal;
 import java.util.List;
 
-/** REST adapter over the same service the SOAP endpoint uses. */
+/**
+ * REST adapter over the same service the SOAP endpoint uses. Who may call each endpoint is set in
+ * {@link com.thabendra.telecom.access.PublicApiSecurity}: a customer only for their own number (CU-2),
+ * staff for any.
+ */
 @RestController
 @RequestMapping("/api")
 public class SubscriberController {
@@ -98,14 +103,16 @@ public class SubscriberController {
     public record SuspendRequest(@NotNull Reason reason) {
     }
 
-    // suspend / unsuspend also tell every gateway to block / unblock (PU-1, PU-2); provider-only with PR
+    // staff only (PR-2): suspend / unsuspend also tell every gateway to block / unblock (PU-1, PU-2),
+    // and the staff member's login is kept as the one who did it
     @PutMapping("/subscribers/{msisdn}/suspension")
-    public SubscriberDto suspend(@PathVariable String msisdn, @Valid @RequestBody SuspendRequest request) {
-        return SubscriberDto.from(service.suspend(msisdn, request.reason()));
+    public SubscriberDto suspend(@PathVariable String msisdn, @Valid @RequestBody SuspendRequest request,
+                                 Authentication staff) {
+        return SubscriberDto.from(service.suspend(msisdn, request.reason(), staff.getName()));
     }
 
     @DeleteMapping("/subscribers/{msisdn}/suspension")
-    public SubscriberDto unsuspend(@PathVariable String msisdn) {
-        return SubscriberDto.from(service.unsuspend(msisdn));
+    public SubscriberDto unsuspend(@PathVariable String msisdn, Authentication staff) {
+        return SubscriberDto.from(service.unsuspend(msisdn, staff.getName()));
     }
 }

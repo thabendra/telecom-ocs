@@ -40,7 +40,8 @@ import java.util.regex.Pattern;
  *   <li>ID-4: same key with a different method, path or body gives 422</li>
  *   <li>ID-5: a retry while the first request is still running gives 409 + Retry-After</li>
  *   <li>ID-6: keys are per caller: the gateway's certificate name on the mTLS port (it can't be faked;
- *       an X-Client-Id header is then ignored), otherwise the X-Client-Id header until CU / PR logins</li>
+ *       an X-Client-Id header is then ignored), on the public port the logged-in customer's number or
+ *       staff login (group 6); the X-Client-Id header only when nobody is logged in</li>
  *   <li>ID-7: results are kept in Redis for resultTtl</li>
  *   <li>ID-9: only 2xx/4xx are stored; after a 5xx the key is dropped so the caller can retry</li>
  * </ul>
@@ -185,7 +186,7 @@ public class IdempotencyFilter extends OncePerRequestFilter {
         ErrorResponses.write(request, response, status, detail, isSoap(request), json);
     }
 
-    // Spring Security runs first, so a gateway's certificate name is already in the security context
+    // Spring Security runs first, so the gateway / customer / staff name is already in the security context
     private static String callerOf(HttpServletRequest request) {
         Authentication caller = SecurityContextHolder.getContext().getAuthentication();
         if (caller != null && caller.isAuthenticated() && !(caller instanceof AnonymousAuthenticationToken)) {

@@ -41,7 +41,7 @@ public class RateLimitFilter extends OncePerRequestFilter {
         this.json = json;
     }
 
-    // only the gateway API; the public API gets per-user limits with the customer logins (PR-3)
+    // only the gateway API; the public API has its own buckets per user / IP (PublicRateLimitFilter, PR-3)
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
         String path = pathOf(request);

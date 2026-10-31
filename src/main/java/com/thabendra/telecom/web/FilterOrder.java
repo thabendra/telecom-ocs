@@ -7,8 +7,9 @@ import org.springframework.core.Ordered;
  * The order every request passes the servlet filters in (lower runs first):
  * <pre>
  *   PortRuleFilter      right door for this API?              404
- *   Spring Security     who is calling? (certificate + token) 401 / 403
+ *   Spring Security     who is calling? (certificate / token) 401 / 403
  *   RateLimitFilter     token left for this gateway?          429   (RL-1, RL-2)
+ *   PublicRateLimit     token left for this user / IP?        429   (PR-3, public API)
  *   IdempotencyFilter   replay, or run once                   400 / 409 / 422
  *   ConcurrencyLimit    free database slot in this copy?      503   (RL-4)
  *   controller / SOAP endpoint -> Oracle

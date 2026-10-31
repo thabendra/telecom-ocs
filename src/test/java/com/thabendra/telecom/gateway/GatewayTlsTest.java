@@ -3,6 +3,7 @@ package com.thabendra.telecom.gateway;
 import com.thabendra.telecom.IntegrationTest;
 import com.thabendra.telecom.TestCerts;
 import com.thabendra.telecom.TestData;
+import com.thabendra.telecom.TestUsers;
 import com.thabendra.telecom.idempotency.IdempotencyFilter;
 import com.thabendra.telecom.soap.WebServiceConfig;
 import org.junit.jupiter.api.BeforeEach;
@@ -13,12 +14,15 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClient;
 
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
@@ -42,18 +46,20 @@ class GatewayTlsTest {
     private JdbcTemplate jdbc;
 
     @Autowired
+    private MockMvc mvc;
+
+    @Autowired
     private StringRedisTemplate redis;
 
     @BeforeEach
-    void setUp() {
+    void setUp() throws Exception {
         TestData.clean(jdbc, redis);
-        ResponseEntity<String> created = TestCerts.exchange(TestCerts.http(ports.publicPort()).post()
-                .uri("/api/subscribers")
-                .contentType(MediaType.APPLICATION_JSON)
-                .body("""
+        // the subscriber is test data: created as staff on the public port (group 6)
+        mvc.perform(post("/api/subscribers").with(TestUsers.admin()).contentType(MediaType.APPLICATION_JSON)
+                        .content("""
                         {"msisdn":"%s","fullName":"Kamal Perera","nic":"200012345678",
-                         "planCode":"BASIC","initialBalance":100.00}""".formatted(MSISDN)));
-        assertThat(created.getStatusCode().value()).isEqualTo(201);
+                         "planCode":"BASIC","initialBalance":100.00}""".formatted(MSISDN)))
+                .andExpect(status().isCreated());
     }
 
     @Test

@@ -1,0 +1,61 @@
+{
+  "realm": "telecom",
+  "displayName": "Telecom OCS staff",
+  "enabled": true,
+  "accessTokenLifespan": 300,
+  "bruteForceProtected": true,
+  "roles": {
+    "realm": [
+      { "name": "ADMIN", "description": "Catalog, prices, speeds, subscribers: everything" },
+      { "name": "CARE_AGENT", "description": "Customer care: look up, register, suspend and unsuspend subscribers" }
+    ]
+  },
+  "clients": [
+    {
+      "clientId": "admin-portal",
+      "name": "Provider admin portal",
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": true,
+      "redirectUris": ["http://localhost:3000/*"],
+      "webOrigins": ["http://localhost:3000"],
+      "attributes": {
+        "pkce.code.challenge.method": "S256"
+      },
+      "protocolMappers": [
+        {
+          "name": "telecom-ocs audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "config": {
+            "included.custom.audience": "telecom-ocs",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
+        }
+      ]
+    }
+  ],
+  "users": [
+    {
+      "username": "admin1",
+      "enabled": true,
+      "email": "admin1@telecom.test",
+      "emailVerified": true,
+      "firstName": "Nimal",
+      "lastName": "Admin",
+      "credentials": [{ "type": "password", "value": "admin1", "temporary": false }],
+      "realmRoles": ["ADMIN"]
+    },
+    {
+      "username": "agent1",
+      "enabled": true,
+      "email": "agent1@telecom.test",
+      "emailVerified": true,
+      "firstName": "Kamala",
+      "lastName": "Agent",
+      "credentials": [{ "type": "password", "value": "agent1", "temporary": false }],
+      "realmRoles": ["CARE_AGENT"]
+    }
+  ]
+}

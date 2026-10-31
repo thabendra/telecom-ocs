@@ -2,6 +2,7 @@ package com.thabendra.telecom.usage;
 
 import com.thabendra.telecom.push.GatewayCommand.Reason;
 import com.thabendra.telecom.push.GatewayCommands;
+import com.thabendra.telecom.subscriber.BusinessRuleException;
 import com.thabendra.telecom.subscriber.OracleErrors;
 import com.thabendra.telecom.subscriber.Subscriber;
 import com.thabendra.telecom.subscriber.SubscriberService;
@@ -51,6 +52,16 @@ public class UsageService {
     public record ActivatedPackage(String msisdn, String packageCode, LocalDateTime expiresAt, BigDecimal balance) {
     }
 
+    /** One row of the usage history (CU-2): one bucket's share of one usage event. */
+    public record UsageItem(String usageRef, LocalDateTime recordedAt, String app, String source, String packageCode,
+                            long dataMb, BigDecimal moneyCharged) {
+    }
+
+    /** A page of the history, newest first. */
+    public record UsageHistory(String msisdn, LocalDateTime from, LocalDateTime to, int page, int size,
+                               List<UsageItem> items) {
+    }
+
     private final DataPackageRepository packages;
     private final SubscriberService subscribers;
     private final JdbcTemplate jdbc;
@@ -83,9 +94,10 @@ public class UsageService {
                         new SqlOutParameter("P_MONEY_CHARGED", Types.NUMERIC));
     }
 
+    /** The packages on sale; one the provider stopped selling (PR-2) is no longer listed. */
     @Transactional(readOnly = true)
     public List<DataPackage> listPackages() {
-        return packages.findAll();
+        return packages.findByActive("Y");
     }
 
     @Transactional
@@ -159,6 +171,38 @@ public class UsageService {
                 planLeft, subscriber.getPlanDataUsedMb(),
                 subscriber.getPlan().getMaxBandwidthKbps(), null));
         return new Quota(msisdn, subscriber.getBalance(), buckets);
+    }
+
+    /**
+     * CU-2: what the customer used from {@code from} (inclusive) to {@code to} (exclusive; null = no end),
+     * by recorded_at, newest first, one page at a time.
+     */
+    @Transactional(readOnly = true)
+    public UsageHistory history(String msisdn, LocalDateTime from, LocalDateTime to, int page, int size) {
+        if (to != null && !from.isBefore(to)) {
+            throw new BusinessRuleException("from must be before to");
+        }
+        Subscriber subscriber = subscribers.getSubscriber(msisdn);
+        List<Object> args = new ArrayList<>(List.of(subscriber.getId(), from));
+        if (to != null) {
+            args.add(to);
+        }
+        args.add((long) page * size);
+        args.add(size);
+        String until = to != null ? " AND ur.recorded_at < ?" : "";
+        List<UsageItem> items = jdbc.query("""
+                SELECT ur.usage_ref, ur.recorded_at, ur.app, ur.source, dp.code, ur.data_mb, ur.money_charged
+                  FROM usage_record ur
+                  LEFT JOIN subscriber_package sp ON sp.id = ur.subscriber_package_id
+                  LEFT JOIN data_package dp ON dp.id = sp.package_id
+                 WHERE ur.subscriber_id = ?
+                   AND ur.recorded_at >= ?%s
+                 ORDER BY ur.recorded_at DESC, ur.id DESC
+                OFFSET ? ROWS FETCH NEXT ? ROWS ONLY""".formatted(until),
+                (rs, i) -> new UsageItem(rs.getString(1), rs.getObject(2, LocalDateTime.class), rs.getString(3),
+                        rs.getString(4), rs.getString(5), rs.getLong(6), rs.getBigDecimal(7)),
+                args.toArray());
+        return new UsageHistory(msisdn, from, to, page, size, items);
     }
 
     private BigDecimal balanceOf(String msisdn) {

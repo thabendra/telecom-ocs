@@ -46,7 +46,7 @@ spring:
 
 # Two doors (SE-1 + SE-8):
 #   server.port         gateway API, mTLS: a client certificate from our CA is required
-#   telecom.public-port customer / admin API, plain HTTP (JWT login comes with CU / PR)
+#   telecom.public-port customer / staff API, plain HTTP; callers log in with a JWT (group 6)
 server:
   port: ${GATEWAY_PORT:8443}
   ssl:
@@ -86,6 +86,32 @@ telecom:
     max-attempts: 4        # 1 + 3 retries (section I), then FAILED
     batch-size: 50         # most commands per poll
     pay-as-you-go-kbps: 1024
+  # group 6, CU-1: customers log in with a one-time code by SMS and get a short JWT from this backend
+  customers:
+    otp:
+      ttl: 5m              # a code works this long
+      cooldown: 60s        # one new code per number per minute
+      max-attempts: 5      # wrong codes before the code is deleted
+      # HMAC key for the code hash kept in Redis (TEST-ONLY default; from a secret store in production)
+      hash-secret: ${OTP_HASH_SECRET:dev-only-otp-hash-secret-change-me-0000}
+    token:
+      issuer: ${CUSTOMER_TOKEN_ISSUER:telecom-ocs-customer-login}
+      audience: customer-api
+      # HS256 key, at least 32 bytes, the same on every backend copy (TEST-ONLY default)
+      secret: ${CUSTOMER_TOKEN_SECRET:dev-only-customer-token-secret-change-me}
+      ttl: 15m
+  # group 6, PR-1: provider staff log in at Keycloak (SSO); its tokens carry the roles ADMIN / CARE_AGENT
+  staff:
+    issuer: ${STAFF_ISSUER:http://localhost:8180/realms/telecom}
+    jwk-set-uri: ${STAFF_JWKS_URI:http://localhost:8180/realms/telecom/protocol/openid-connect/certs}
+    audience: telecom-ocs
+  # group 6, PR-3: token buckets on the public API, the same Lua script as the gateways' (group 4)
+  public-rate-limit:
+    anonymous: { capacity: 30, refill-per-second: 0.5 }    # per IP: login, catalog
+    customer: { capacity: 60, refill-per-second: 1 }       # per logged-in number
+    staff: { capacity: 200, refill-per-second: 10 }        # per staff login
+    # load balancers / proxies whose X-Forwarded-For is believed (exact addresses); empty = none
+    trusted-proxies: []
   idempotency:
     # write calls that must carry an Idempotency-Key header (ID-1)
     paths:

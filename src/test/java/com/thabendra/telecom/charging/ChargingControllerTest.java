@@ -4,6 +4,7 @@ import com.jayway.jsonpath.JsonPath;
 import com.thabendra.telecom.IntegrationTest;
 import com.thabendra.telecom.TestCerts;
 import com.thabendra.telecom.TestData;
+import com.thabendra.telecom.TestUsers;
 import com.thabendra.telecom.idempotency.IdempotencyFilter;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -194,14 +195,15 @@ class ChargingControllerTest {
     }
 
     private void createSubscriber(String balance) throws Exception {
-        mvc.perform(post("/api/subscribers").contentType(MediaType.APPLICATION_JSON).content("""
+        mvc.perform(post("/api/subscribers").with(TestUsers.admin()).contentType(MediaType.APPLICATION_JSON).content("""
                         {"msisdn":"%s","fullName":"Kamal Perera","nic":"200012345678",
                          "planCode":"BASIC","initialBalance":%s}""".formatted(MSISDN, balance)))
                 .andExpect(status().isCreated());
     }
 
     private void activate(String packageCode) throws Exception {
-        mvc.perform(post("/api/subscribers/{msisdn}/packages", MSISDN).contentType(MediaType.APPLICATION_JSON)
+        mvc.perform(post("/api/subscribers/{msisdn}/packages", MSISDN).with(TestUsers.admin())
+                        .contentType(MediaType.APPLICATION_JSON)
                         .header(IdempotencyFilter.KEY_HEADER, UUID.randomUUID().toString())
                         .content("{\"packageCode\":\"%s\"}".formatted(packageCode)))
                 .andExpect(status().isCreated());

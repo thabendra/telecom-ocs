@@ -1,4 +1,4 @@
-# Local Oracle Database Free 23ai + Redis. Oracle's first start takes ~1 minute; the app user "telecom" is created automatically.
+# Local Oracle Database Free 23ai + Redis + Keycloak. Oracle's first start takes ~1 minute; the app user "telecom" is created automatically.
 # Passwords here are local test values only.
 services:
   oracle:
@@ -22,6 +22,19 @@ services:
     image: redis:7.4-alpine
     ports:
       - "6379:6379"
+
+  # PR-1: SSO for provider staff. Imports keycloak/telecom-realm.json (roles ADMIN / CARE_AGENT and two
+  # test users); admin console at http://localhost:8180 (admin / admin, local test values only)
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.0.7
+    command: start-dev --import-realm --http-port=8180
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin
+    ports:
+      - "8180:8180"
+    volumes:
+      - ./keycloak:/opt/keycloak/data/import:ro
 
 volumes:
   oracle-data:

@@ -43,7 +43,15 @@ public class DataPackage {
     @Column(name = "throttled_bandwidth_kbps")
     private Integer throttledBandwidthKbps;
 
+    // 'Y' on sale, 'N' no longer sold; the provider changes it (PR-2), JPA only reads it
+    @Column(insertable = false, updatable = false)
+    private String active;
+
     protected DataPackage() {
+    }
+
+    public boolean isActive() {
+        return "Y".equals(active);
     }
 
     public String getCode() {

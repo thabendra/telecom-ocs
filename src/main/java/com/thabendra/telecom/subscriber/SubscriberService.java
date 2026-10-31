@@ -69,9 +69,10 @@ public class SubscriberService {
     /**
      * Suspends the subscriber (operator decision or fraud): charging refuses them from now on, and every
      * gateway is told to block their traffic (PU-1). A top-up doesn't lift this, only {@link #unsuspend}.
+     * {@code by} is the staff member's login (PR-2), kept on the subscriber row.
      */
     @Transactional
-    public Subscriber suspend(String msisdn, Reason reason) {
+    public Subscriber suspend(String msisdn, Reason reason, String by) {
         if (reason != Reason.SUSPENDED && reason != Reason.FRAUD) {
             throw new BusinessRuleException("A suspension reason is SUSPENDED or FRAUD, not " + reason);
         }
@@ -81,19 +82,21 @@ public class SubscriberService {
             throw new BusinessRuleException("Subscriber " + msisdn + " is already suspended");
         }
         subscriber.suspend();
+        recordStatusChange(msisdn, by);
         commands.block(msisdn, reason);
         return subscriber;
     }
 
     /** Lifts the suspension and tells every gateway to let the user through at the plan's speed (PU-2). */
     @Transactional
-    public Subscriber unsuspend(String msisdn) {
+    public Subscriber unsuspend(String msisdn, String by) {
         Subscriber subscriber = subscribers.findByMsisdnForUpdate(msisdn)
                 .orElseThrow(() -> new NotFoundException("Subscriber " + msisdn + " not found"));
         if (subscriber.getStatus() != Subscriber.Status.SUSPENDED) {
             throw new BusinessRuleException("Subscriber " + msisdn + " is not suspended");
         }
         subscriber.activate();
+        recordStatusChange(msisdn, by);
         commands.unblock(msisdn, Reason.UNSUSPENDED, subscriber.getPlan().getMaxBandwidthKbps());
         return subscriber;
     }
@@ -110,6 +113,12 @@ public class SubscriberService {
             throw OracleErrors.translate(e);
         }
         return getSubscriber(msisdn);
+    }
+
+    // the row is locked already (findByMsisdnForUpdate); JPA doesn't map these two columns
+    private void recordStatusChange(String msisdn, String by) {
+        jdbc.update("UPDATE subscriber SET status_changed_by = ?, status_changed_at = SYSTIMESTAMP WHERE msisdn = ?",
+                by, msisdn);
     }
 
     private Plan findPlan(String code) {

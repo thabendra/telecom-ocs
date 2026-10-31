@@ -4,6 +4,7 @@ import com.github.dockerjava.api.DockerClient;
 import com.thabendra.telecom.IntegrationTest;
 import com.thabendra.telecom.TestCerts;
 import com.thabendra.telecom.TestData;
+import com.thabendra.telecom.TestUsers;
 import com.thabendra.telecom.idempotency.IdempotencyFilter;
 import com.thabendra.telecom.soap.WebServiceConfig;
 import org.junit.jupiter.api.BeforeEach;
@@ -64,7 +65,7 @@ class RateLimitTest {
     @BeforeEach
     void setUp() throws Exception {
         TestData.clean(jdbc, redis);
-        mvc.perform(post("/api/subscribers").contentType(MediaType.APPLICATION_JSON).content("""
+        mvc.perform(post("/api/subscribers").with(TestUsers.admin()).contentType(MediaType.APPLICATION_JSON).content("""
                         {"msisdn":"%s","fullName":"Kamal Perera","nic":"200012345678",
                          "planCode":"BASIC","initialBalance":100.00}""".formatted(MSISDN)))
                 .andExpect(status().isCreated());

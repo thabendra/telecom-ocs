@@ -8,7 +8,11 @@ public final class TestData {
 
     // children before parents, so foreign keys never block a delete
     private static final String[] TABLES = {"gateway_command", "quota_reservation", "charging_request",
-            "charging_session", "usage_record", "subscriber_package", "plan_change", "subscriber"};
+            "charging_session", "usage_record", "subscriber_package", "plan_change", "subscriber",
+            "data_package_price"};
+
+    // packages a test created (codes start with TEST_); the seeded catalog stays
+    public static final String TEST_PACKAGE_PREFIX = "TEST_";
 
     private TestData() {
     }
@@ -17,6 +21,7 @@ public final class TestData {
         for (String table : TABLES) {
             jdbc.update("DELETE FROM " + table);
         }
+        jdbc.update("DELETE FROM data_package WHERE code LIKE ?", TEST_PACKAGE_PREFIX + "%");
         flushRedis(redis);
     }
 

@@ -1,9 +1,13 @@
 package com.thabendra.telecom.rest;
 
+import com.thabendra.telecom.customer.InvalidOtpException;
+import com.thabendra.telecom.customer.OtpCooldownException;
 import com.thabendra.telecom.subscriber.BusinessRuleException;
 import com.thabendra.telecom.subscriber.NotFoundException;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.servlet.mvc.method.annotation.ResponseEntityExceptionHandler;
@@ -20,5 +24,18 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
     @ExceptionHandler(BusinessRuleException.class)
     public ProblemDetail businessRule(BusinessRuleException e) {
         return ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, e.getMessage());
+    }
+
+    // CU-1: a wrong, used, expired or locked login code
+    @ExceptionHandler(InvalidOtpException.class)
+    public ProblemDetail invalidOtp(InvalidOtpException e) {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.UNAUTHORIZED, e.getMessage());
+    }
+
+    @ExceptionHandler(OtpCooldownException.class)
+    public ResponseEntity<ProblemDetail> otpCooldown(OtpCooldownException e) {
+        return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+                .header(HttpHeaders.RETRY_AFTER, String.valueOf(e.retryAfterSeconds()))
+                .body(ProblemDetail.forStatusAndDetail(HttpStatus.TOO_MANY_REQUESTS, e.getMessage()));
     }
 }

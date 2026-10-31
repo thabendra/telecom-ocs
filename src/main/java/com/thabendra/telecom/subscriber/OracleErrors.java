@@ -6,7 +6,7 @@ import java.sql.SQLException;
 
 /**
  * Maps the RAISE_APPLICATION_ERROR codes used by the PL/SQL procedures to domain exceptions:
- * ORA-20001/20002/20007 not found, ORA-20003..20006/20008/20009 business rule broken.
+ * ORA-20001/20002/20007 not found, ORA-20003..20006/20008..20010 business rule broken.
  */
 public final class OracleErrors {
 
@@ -19,7 +19,7 @@ public final class OracleErrors {
             String message = message(sql);
             switch (sql.getErrorCode()) {
                 case 20001, 20002, 20007 -> { return new NotFoundException(message); }
-                case 20003, 20004, 20005, 20006, 20008, 20009 -> { return new BusinessRuleException(message); }
+                case 20003, 20004, 20005, 20006, 20008, 20009, 20010 -> { return new BusinessRuleException(message); }
                 default -> { }
             }
         }
