@@ -262,6 +262,42 @@ telecom:
     in-flight-wait: 50ms
 ```
 
+## Push channel: commands for the gateways (group 5)
+
+The backend sometimes has to tell the gateways to act without being asked: block a user who was
+suspended, or let a user through again after a top-up.
+
+| When | Command (to every gateway) |
+|---|---|
+| A charging DENY: nothing left anywhere (once, not on every DENY) | `BLOCK` `OUT_OF_QUOTA` |
+| `PUT /api/subscribers/{msisdn}/suspension {"reason":"SUSPENDED"}` / `"FRAUD"` | `BLOCK` `SUSPENDED` / `FRAUD` |
+| A top-up after running out | `UNBLOCK` `TOP_UP`, at the pay as you go speed (1024 kbps) |
+| A package purchase after running out | `UNBLOCK` `PACKAGE`, at the package's speed |
+| `DELETE /api/subscribers/{msisdn}/suspension` | `UNBLOCK` `UNSUSPENDED`, at the plan's speed |
+
+A top-up never lifts a suspension or a fraud block.
+
+**Outbox (PU-4).** Commands are rows in `gateway_command` (V8), written in the same transaction as the
+change that causes them, so a command exists exactly when that change was committed.
+
+**Channel (PU-3).** The gateway polls over its own outbound mTLS connection with a `notify:read`
+token, and acks each command once it applied it:
+
+```
+GET  /charging/v1/commands            → [{id, msisdn, action, reason, bandwidthKbps, attempt}]
+POST /charging/v1/commands/{id}/ack   → 204
+```
+
+```
+PENDING ──poll──► SENT ──ack──► ACKED
+                   │ no ack within 10 s, 20 s, 40 s, 60 s (+ up to 20 % jitter)
+                   └──► delivered again (attempt 2, 3, 4) ──► FAILED after the 4th
+```
+
+The `id` is the gateway's idempotency key: a command delivered again because its ack was lost is
+applied once and acked again. `SELECT ... FOR UPDATE SKIP LOCKED` lets two pollers of one gateway
+take different commands.
+
 ## Gateway simulator
 
 `gateway-simulator/` is a separate Spring Boot command line app that plays the network gateway: it
@@ -399,6 +435,10 @@ mvn test
   faults, plan change and the audit table.
 - `ChargingControllerTest` (REST) and `ChargingEndpointTest` (SOAP): online charging against Oracle:
   grants per bucket, reserve → commit, DENY + BLOCK, session errors.
+- `PushCommandTest`: the push channel against Oracle: BLOCK on DENY (once), suspension and fraud,
+  UNBLOCK + speed after a top-up, a package or unsuspending, no unblock of a suspended user,
+  polling per gateway with `notify:read`, acks, redelivery with a longer wait, `FAILED` after 4,
+  and another gateway's command can't be acked. `PushPropertiesTest` checks the redelivery waits.
 - `RateLimitTest`: the Lua bucket against real Redis (burst, refusal, refill, key TTL), `429` +
   `Retry-After` over REST and SOAP, other gateways unaffected, a retry that would be replayed is
   limited too, and charging keeps working on the local bucket while Redis is paused.
@@ -410,7 +450,8 @@ mvn test
 - `gateway-simulator`: `GatewaySimulatorTest` checks the simulator's requests against a mocked backend;
   `ChargingClientRetryTest` checks the retry policy (backoff, jitter, budget, circuit breaker, metrics);
   `SoapChargingClientTest` and `RestChargingClientTest` check each protocol client,
-  `ChargingClientsTest` the choice between them, `GatewayHttpTest` the HTTPS client with the
+  `ChargingClientsTest` the choice between them, `CommandPollerTest` the push channel (apply once,
+  ack, retry), `GatewayHttpTest` the HTTPS client with the
   gateway certificate, and `TokenClientTest` getting, caching and refreshing access tokens.
 - `UsageEndpointTest`: usage charging against Oracle: app packages, add-ons, splitting across buckets,
   pay as you go, fair usage throttling, quota order and plan data refill.

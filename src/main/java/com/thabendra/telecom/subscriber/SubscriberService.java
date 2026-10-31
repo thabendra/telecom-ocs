@@ -1,5 +1,8 @@
 package com.thabendra.telecom.subscriber;
 
+import com.thabendra.telecom.push.GatewayCommand.Reason;
+import com.thabendra.telecom.push.GatewayCommands;
+import com.thabendra.telecom.push.PushProperties;
 import org.springframework.dao.DataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
@@ -15,11 +18,16 @@ public class SubscriberService {
     private final SubscriberRepository subscribers;
     private final PlanRepository plans;
     private final JdbcTemplate jdbc;
+    private final GatewayCommands commands;
+    private final PushProperties push;
 
-    public SubscriberService(SubscriberRepository subscribers, PlanRepository plans, JdbcTemplate jdbc) {
+    public SubscriberService(SubscriberRepository subscribers, PlanRepository plans, JdbcTemplate jdbc,
+                             GatewayCommands commands, PushProperties push) {
         this.subscribers = subscribers;
         this.plans = plans;
         this.jdbc = jdbc;
+        this.commands = commands;
+        this.push = push;
     }
 
     @Transactional(readOnly = true)
@@ -53,6 +61,40 @@ public class SubscriberService {
         Subscriber subscriber = subscribers.findByMsisdnForUpdate(msisdn)
                 .orElseThrow(() -> new NotFoundException("Subscriber " + msisdn + " not found"));
         subscriber.topUp(amount);
+        // PU-2: blocked for running out? Now charging can use the balance, at the pay as you go speed
+        commands.unblockIfOutOfQuota(msisdn, Reason.TOP_UP, push.payAsYouGoKbps());
+        return subscriber;
+    }
+
+    /**
+     * Suspends the subscriber (operator decision or fraud): charging refuses them from now on, and every
+     * gateway is told to block their traffic (PU-1). A top-up doesn't lift this, only {@link #unsuspend}.
+     */
+    @Transactional
+    public Subscriber suspend(String msisdn, Reason reason) {
+        if (reason != Reason.SUSPENDED && reason != Reason.FRAUD) {
+            throw new BusinessRuleException("A suspension reason is SUSPENDED or FRAUD, not " + reason);
+        }
+        Subscriber subscriber = subscribers.findByMsisdnForUpdate(msisdn)
+                .orElseThrow(() -> new NotFoundException("Subscriber " + msisdn + " not found"));
+        if (subscriber.getStatus() == Subscriber.Status.SUSPENDED) {
+            throw new BusinessRuleException("Subscriber " + msisdn + " is already suspended");
+        }
+        subscriber.suspend();
+        commands.block(msisdn, reason);
+        return subscriber;
+    }
+
+    /** Lifts the suspension and tells every gateway to let the user through at the plan's speed (PU-2). */
+    @Transactional
+    public Subscriber unsuspend(String msisdn) {
+        Subscriber subscriber = subscribers.findByMsisdnForUpdate(msisdn)
+                .orElseThrow(() -> new NotFoundException("Subscriber " + msisdn + " not found"));
+        if (subscriber.getStatus() != Subscriber.Status.SUSPENDED) {
+            throw new BusinessRuleException("Subscriber " + msisdn + " is not suspended");
+        }
+        subscriber.activate();
+        commands.unblock(msisdn, Reason.UNSUSPENDED, subscriber.getPlan().getMaxBandwidthKbps());
         return subscriber;
     }
 

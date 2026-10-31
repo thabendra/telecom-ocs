@@ -18,8 +18,9 @@ public record GatewayProperties(List<String> paths, List<String> allowed, Token 
      * @param issuer    the token server (iss claim)
      * @param jwkSetUri where its public signing keys are published
      * @param audience  this API's name, required in the aud claim
-     * @param scope     the scope the gateway API needs (SE-5)
+     * @param scope       the scope charging needs (SE-5)
+     * @param notifyScope the scope the push channel needs (PU-3)
      */
-    public record Token(String issuer, String jwkSetUri, String audience, String scope) {
+    public record Token(String issuer, String jwkSetUri, String audience, String scope, String notifyScope) {
     }
 }

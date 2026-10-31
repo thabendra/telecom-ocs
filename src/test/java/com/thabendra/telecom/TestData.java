@@ -7,8 +7,8 @@ import org.springframework.jdbc.core.JdbcTemplate;
 public final class TestData {
 
     // children before parents, so foreign keys never block a delete
-    private static final String[] TABLES = {"quota_reservation", "charging_request", "charging_session",
-            "usage_record", "subscriber_package", "plan_change", "subscriber"};
+    private static final String[] TABLES = {"gateway_command", "quota_reservation", "charging_request",
+            "charging_session", "usage_record", "subscriber_package", "plan_change", "subscriber"};
 
     private TestData() {
     }

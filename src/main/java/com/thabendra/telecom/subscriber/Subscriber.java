@@ -67,6 +67,14 @@ public class Subscriber {
         this.balance = this.balance.add(amount);
     }
 
+    public void suspend() {
+        this.status = Status.SUSPENDED;
+    }
+
+    public void activate() {
+        this.status = Status.ACTIVE;
+    }
+
     public Long getId() {
         return id;
     }

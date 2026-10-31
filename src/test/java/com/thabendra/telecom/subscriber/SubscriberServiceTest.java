@@ -1,5 +1,8 @@
 package com.thabendra.telecom.subscriber;
 
+import com.thabendra.telecom.push.GatewayCommand.Reason;
+import com.thabendra.telecom.push.GatewayCommands;
+import com.thabendra.telecom.push.PushProperties;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.UncategorizedSQLException;
@@ -7,6 +10,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 
 import java.math.BigDecimal;
 import java.sql.SQLException;
+import java.time.Duration;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -26,6 +30,7 @@ class SubscriberServiceTest {
     private SubscriberRepository subscribers;
     private PlanRepository plans;
     private JdbcTemplate jdbc;
+    private GatewayCommands commands;
     private SubscriberService service;
 
     @BeforeEach
@@ -33,7 +38,62 @@ class SubscriberServiceTest {
         subscribers = mock(SubscriberRepository.class);
         plans = mock(PlanRepository.class);
         jdbc = mock(JdbcTemplate.class);
-        service = new SubscriberService(subscribers, plans, jdbc);
+        commands = mock(GatewayCommands.class);
+        PushProperties push = new PushProperties(Duration.ofSeconds(10), Duration.ofSeconds(60), 4, 50, 1024);
+        service = new SubscriberService(subscribers, plans, jdbc, commands, push);
+    }
+
+    // group 5: the push channel triggers
+
+    @Test
+    void topUpAsksToUnblockAtThePayAsYouGoSpeed() {
+        Subscriber kamal = new Subscriber("94771234567", "Kamal Perera", "200012345678", BigDecimal.ZERO, basic);
+        when(subscribers.findByMsisdnForUpdate("94771234567")).thenReturn(Optional.of(kamal));
+
+        service.topUp("94771234567", new BigDecimal("50.00"));
+
+        verify(commands).unblockIfOutOfQuota("94771234567", Reason.TOP_UP, 1024);
+    }
+
+    @Test
+    void suspendBlocksTheUserOnTheGateways() {
+        Subscriber kamal = new Subscriber("94771234567", "Kamal Perera", "200012345678", BigDecimal.TEN, basic);
+        when(subscribers.findByMsisdnForUpdate("94771234567")).thenReturn(Optional.of(kamal));
+
+        service.suspend("94771234567", Reason.FRAUD);
+
+        assertThat(kamal.getStatus()).isEqualTo(Subscriber.Status.SUSPENDED);
+        verify(commands).block("94771234567", Reason.FRAUD);
+    }
+
+    @Test
+    void suspendingTwiceIsRefused() {
+        Subscriber kamal = new Subscriber("94771234567", "Kamal Perera", "200012345678", BigDecimal.TEN, basic);
+        kamal.suspend();
+        when(subscribers.findByMsisdnForUpdate("94771234567")).thenReturn(Optional.of(kamal));
+
+        assertThatThrownBy(() -> service.suspend("94771234567", Reason.SUSPENDED))
+                .isInstanceOf(BusinessRuleException.class)
+                .hasMessageContaining("already suspended");
+        verify(commands, never()).block(anyString(), any());
+    }
+
+    @Test
+    void aTopUpIsNotASuspensionReason() {
+        assertThatThrownBy(() -> service.suspend("94771234567", Reason.TOP_UP))
+                .isInstanceOf(BusinessRuleException.class);
+    }
+
+    @Test
+    void unsuspendUnblocksAtThePlanSpeed() {
+        Subscriber kamal = new Subscriber("94771234567", "Kamal Perera", "200012345678", BigDecimal.TEN, basic);
+        kamal.suspend();
+        when(subscribers.findByMsisdnForUpdate("94771234567")).thenReturn(Optional.of(kamal));
+
+        service.unsuspend("94771234567");
+
+        assertThat(kamal.getStatus()).isEqualTo(Subscriber.Status.ACTIVE);
+        verify(commands).unblock("94771234567", Reason.UNSUSPENDED, 10240);
     }
 
     @Test

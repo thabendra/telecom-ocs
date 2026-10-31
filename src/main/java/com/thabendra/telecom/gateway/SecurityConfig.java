@@ -24,7 +24,7 @@ import org.springframework.security.web.util.matcher.RequestMatcher;
  *       <li>TLS handshake: a certificate from our CA (SE-1)</li>
  *       <li>Authorization: Bearer access token from our token server: signature, iss, aud, exp (SE-3)</li>
  *       <li>token and certificate belong to the same allowed gateway, cnf matches (SE-1, SE-3, SE-4)</li>
- *       <li>the token has scope charging:write (SE-5)</li>
+ *       <li>the token has scope charging:write, or notify:read for the push channel (SE-5, PU-3)</li>
  *     </ol>
  *     The gateway name becomes the caller's identity.</li>
  *   <li>Everything else: open for now; customer and provider logins come with CU / PR.</li>
@@ -41,7 +41,12 @@ public class SecurityConfig {
         http.securityMatcher(gatewayPaths(gateways))
                 .oauth2ResourceServer(resource -> resource.jwt(jwt -> jwt.decoder(gatewayTokenDecoder)))
                 .addFilterAfter(new GatewayBindingFilter(gateways), BearerTokenAuthenticationFilter.class)
-                .authorizeHttpRequests(auth -> auth.anyRequest().hasAuthority("SCOPE_" + gateways.token().scope()))
+                .authorizeHttpRequests(auth -> auth
+                        // the push channel (PU-3) reads commands: notify:read
+                        .requestMatchers(AntPathRequestMatcher.antMatcher("/charging/v1/commands/**"))
+                        .hasAuthority("SCOPE_" + gateways.token().notifyScope())
+                        // everything else is charging: charging:write
+                        .anyRequest().hasAuthority("SCOPE_" + gateways.token().scope()))
                 .csrf(AbstractHttpConfigurer::disable)
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS));
         return http.build();

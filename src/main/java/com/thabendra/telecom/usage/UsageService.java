@@ -1,5 +1,7 @@
 package com.thabendra.telecom.usage;
 
+import com.thabendra.telecom.push.GatewayCommand.Reason;
+import com.thabendra.telecom.push.GatewayCommands;
 import com.thabendra.telecom.subscriber.OracleErrors;
 import com.thabendra.telecom.subscriber.Subscriber;
 import com.thabendra.telecom.subscriber.SubscriberService;
@@ -52,13 +54,16 @@ public class UsageService {
     private final DataPackageRepository packages;
     private final SubscriberService subscribers;
     private final JdbcTemplate jdbc;
+    private final GatewayCommands commands;
     private final SimpleJdbcCall activatePackageCall;
     private final SimpleJdbcCall recordUsageCall;
 
-    public UsageService(DataPackageRepository packages, SubscriberService subscribers, JdbcTemplate jdbc) {
+    public UsageService(DataPackageRepository packages, SubscriberService subscribers, JdbcTemplate jdbc,
+                        GatewayCommands commands) {
         this.packages = packages;
         this.subscribers = subscribers;
         this.jdbc = jdbc;
+        this.commands = commands;
         this.activatePackageCall = new SimpleJdbcCall(jdbc)
                 .withProcedureName("ACTIVATE_PACKAGE")
                 .withoutProcedureColumnMetaDataAccess()
@@ -94,6 +99,10 @@ public class UsageService {
         long id = ((Number) out.get("P_SUBSCRIBER_PACKAGE_ID")).longValue();
         LocalDateTime expiresAt = jdbc.queryForObject(
                 "SELECT expires_at FROM subscriber_package WHERE id = ?", LocalDateTime.class, id);
+        // PU-2: blocked for running out? The new package lets the user through again at its speed
+        Integer packageKbps = jdbc.queryForObject(
+                "SELECT max_bandwidth_kbps FROM data_package WHERE code = ?", Integer.class, packageCode);
+        commands.unblockIfOutOfQuota(msisdn, Reason.PACKAGE, packageKbps);
         return new ActivatedPackage(msisdn, packageCode, expiresAt, balanceOf(msisdn));
     }
 

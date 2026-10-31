@@ -1,5 +1,6 @@
 package com.thabendra.telecom.rest;
 
+import com.thabendra.telecom.push.GatewayCommand.Reason;
 import com.thabendra.telecom.subscriber.Plan;
 import com.thabendra.telecom.subscriber.Subscriber;
 import com.thabendra.telecom.subscriber.SubscriberService;
@@ -11,6 +12,7 @@ import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 import org.springframework.http.HttpStatus;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -90,5 +92,20 @@ public class SubscriberController {
     @PutMapping("/subscribers/{msisdn}/plan")
     public SubscriberDto changePlan(@PathVariable String msisdn, @Valid @RequestBody ChangePlanRequest request) {
         return SubscriberDto.from(service.changePlan(msisdn, request.planCode()));
+    }
+
+    /** reason: SUSPENDED (operator decision) or FRAUD. */
+    public record SuspendRequest(@NotNull Reason reason) {
+    }
+
+    // suspend / unsuspend also tell every gateway to block / unblock (PU-1, PU-2); provider-only with PR
+    @PutMapping("/subscribers/{msisdn}/suspension")
+    public SubscriberDto suspend(@PathVariable String msisdn, @Valid @RequestBody SuspendRequest request) {
+        return SubscriberDto.from(service.suspend(msisdn, request.reason()));
+    }
+
+    @DeleteMapping("/subscribers/{msisdn}/suspension")
+    public SubscriberDto unsuspend(@PathVariable String msisdn) {
+        return SubscriberDto.from(service.unsuspend(msisdn));
     }
 }

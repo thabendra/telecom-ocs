@@ -1,5 +1,6 @@
 package com.thabendra.telecom.charging;
 
+import com.thabendra.telecom.push.GatewayCommands;
 import com.thabendra.telecom.subscriber.OracleErrors;
 import com.thabendra.telecom.usage.UsageService.App;
 import org.springframework.dao.DataAccessException;
@@ -38,20 +39,32 @@ public class ChargingService {
     }
 
     private final ChargingSessionRepository sessions;
+    private final GatewayCommands commands;
 
-    public ChargingService(ChargingSessionRepository sessions) {
+    public ChargingService(ChargingSessionRepository sessions, GatewayCommands commands) {
         this.sessions = sessions;
+        this.commands = commands;
     }
 
+    // a DENY also queues BLOCK for every gateway (PU-1), in this same transaction
     @Transactional
     public Grant startSession(String msisdn, App app, long requestedMb) {
         String sessionId = UUID.randomUUID().toString();
-        return toGrant(sessionId, call(() -> sessions.startSession(sessionId, msisdn, app.name(), requestedMb)));
+        Grant grant = toGrant(sessionId, call(() -> sessions.startSession(sessionId, msisdn, app.name(), requestedMb)));
+        if (grant.result() == Result.DENY) {
+            commands.blockOutOfQuota(msisdn);
+        }
+        return grant;
     }
 
     @Transactional
     public Grant updateSession(String sessionId, long requestNumber, long usedMb, long requestedMb) {
-        return toGrant(sessionId, call(() -> sessions.updateSession(sessionId, requestNumber, usedMb, requestedMb)));
+        Grant grant = toGrant(sessionId,
+                call(() -> sessions.updateSession(sessionId, requestNumber, usedMb, requestedMb)));
+        if (grant.result() == Result.DENY) {
+            commands.blockOutOfQuotaForSession(sessionId);
+        }
+        return grant;
     }
 
     @Transactional

@@ -25,7 +25,7 @@ simulator:
   client-id: ${GATEWAY_CERT:pgw-colombo-01}   # = certificate name; token client_id, and sent as X-Client-Id
   token:                         # SE-2: OAuth2 client credentials; empty url = no Authorization header
     url: ${TOKEN_URL:https://localhost:9443/oauth2/token}
-    scope: charging:write
+    scope: charging:write notify:read   # charging + the push channel (PU-3)
   protocol: REST                 # REST (/charging/v1/sessions) or SOAP (/ws StartSession/UpdateSession/ReleaseSession)
   msisdn: "94771234567"
   app: YOUTUBE                   # YOUTUBE, WHATSAPP, FACEBOOK or GENERAL (what DPI detected)
@@ -34,6 +34,7 @@ simulator:
   used-percent: 100              # how much of each grant the user really uses
   final-used-mb: 37              # usage reported in the release
   replay-each-request: false     # send every request twice with the same key to show idempotent replay
+  poll-commands: true            # after the session, poll the push channel once for BLOCK / UNBLOCK (PU-3)
   retry:                         # section I
     max-retries: 3               # RT-1: 4 tries in total
     base-backoff: 100ms          # RT-2: 100, 200, 400 ms ... (each wait is random 0..backoff, RT-3)

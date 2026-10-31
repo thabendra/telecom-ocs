@@ -60,7 +60,7 @@ public class GatewaySimulatorApplication {
     @Bean
     AccessTokens accessTokens(ClientHttpRequestFactory gatewayHttp, SimulatorProperties props,
                               @Value("${simulator.token.url:}") String tokenUrl,
-                              @Value("${simulator.token.scope:charging:write}") String scope) {
+                              @Value("${simulator.token.scope:charging:write notify:read}") String scope) {
         if (tokenUrl.isBlank()) {
             return AccessTokens.NONE;
         }
@@ -80,11 +80,25 @@ public class GatewaySimulatorApplication {
         return new GatewaySimulator(client, props);
     }
 
+    // PU-3: poll the backend's push channel for BLOCK / UNBLOCK commands (REST, same connection and token)
+    @Bean
+    CommandPoller commandPoller(ClientHttpRequestFactory gatewayHttp, SimulatorProperties props,
+                                RetryingCaller caller, AccessTokens accessTokens) {
+        return new CommandPoller(new CommandClient(RestClient.builder().requestFactory(gatewayHttp),
+                props.backendUrl(), accessTokens), caller);
+    }
+
     @Bean
     @ConditionalOnProperty(name = "simulator.run-on-startup", havingValue = "true", matchIfMissing = true)
-    CommandLineRunner runSession(GatewaySimulator simulator, MeterRegistry metrics) {
+    CommandLineRunner runSession(GatewaySimulator simulator, CommandPoller commands, MeterRegistry metrics,
+                                 @Value("${simulator.poll-commands:true}") boolean pollCommands) {
         return args -> {
             simulator.run();
+            if (pollCommands) {
+                CommandPoller.Result polled = commands.pollOnce();
+                log.info("COMMANDS received {}, applied {}, acked {}", polled.received(), polled.applied(),
+                        polled.acked());
+            }
             // RT-10
             for (String name : List.of(RetryingCaller.RETRIES, RetryingCaller.SUCCEEDED_AFTER_RETRY,
                     RetryingCaller.EXHAUSTED, RetryingCaller.CIRCUIT_REJECTED)) {

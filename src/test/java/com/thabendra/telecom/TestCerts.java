@@ -45,13 +45,17 @@ public final class TestCerts {
      * for it (TestTokens). Added after another gateway(...), it replaces both.
      */
     public static RequestPostProcessor gateway(String name) {
+        return gateway(name, TestTokens.token(name));
+    }
+
+    /** MockMvc: this gateway's certificate with this access token (e.g. one with other scopes). */
+    public static RequestPostProcessor gateway(String name, String token) {
         RequestPostProcessor certificate;
         try (InputStream pem = Files.newInputStream(file(name + ".pem"))) {
             certificate = x509((X509Certificate) CertificateFactory.getInstance("X.509").generateCertificate(pem));
         } catch (Exception e) {
             throw new IllegalStateException(e);
         }
-        String token = TestTokens.token(name);
         return request -> {
             MockHttpServletRequest withCertificate = certificate.postProcessRequest(request);
             withCertificate.removeHeader(HttpHeaders.AUTHORIZATION);
