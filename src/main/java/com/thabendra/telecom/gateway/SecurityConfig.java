@@ -1,25 +1,32 @@
 package com.thabendra.telecom.gateway;
 
+import org.springframework.boot.ssl.SslBundles;
+import org.springframework.boot.web.client.RestTemplateBuilder;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.annotation.Order;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
 import org.springframework.security.config.http.SessionCreationPolicy;
-import org.springframework.security.core.userdetails.User;
-import org.springframework.security.core.userdetails.UserDetailsService;
-import org.springframework.security.core.userdetails.UsernameNotFoundException;
+import org.springframework.security.oauth2.jwt.JwtDecoder;
+import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
+import org.springframework.security.oauth2.server.resource.web.authentication.BearerTokenAuthenticationFilter;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.util.matcher.AntPathRequestMatcher;
 import org.springframework.security.web.util.matcher.OrRequestMatcher;
 import org.springframework.security.web.util.matcher.RequestMatcher;
 
 /**
- * Who may call what (SE-1, step 3).
+ * Who may call what (group 3).
  * <ul>
- *   <li>Gateway API (/charging/**, /ws/**): the TLS handshake has already checked the certificate
- *       (our CA, not expired, a client certificate, private key proven). Here its name (CN) must be
- *       an allowed gateway, otherwise 403. The name becomes the caller's identity.</li>
+ *   <li>Gateway API (/charging/**, /ws/**), on the mTLS port:
+ *     <ol>
+ *       <li>TLS handshake: a certificate from our CA (SE-1)</li>
+ *       <li>Authorization: Bearer access token from our token server: signature, iss, aud, exp (SE-3)</li>
+ *       <li>token and certificate belong to the same allowed gateway, cnf matches (SE-1, SE-3, SE-4)</li>
+ *       <li>the token has scope charging:write (SE-5)</li>
+ *     </ol>
+ *     The gateway name becomes the caller's identity.</li>
  *   <li>Everything else: open for now; customer and provider logins come with CU / PR.</li>
  * </ul>
  * Machine calls carry no cookies and keep no session, so CSRF protection and sessions are off.
@@ -27,16 +34,14 @@ import org.springframework.security.web.util.matcher.RequestMatcher;
 @Configuration
 public class SecurityConfig {
 
-    public static final String GATEWAY_ROLE = "GATEWAY";
-
     @Bean
     @Order(1)
-    SecurityFilterChain gatewayApi(HttpSecurity http, GatewayProperties gateways) throws Exception {
+    SecurityFilterChain gatewayApi(HttpSecurity http, GatewayProperties gateways, JwtDecoder gatewayTokenDecoder)
+            throws Exception {
         http.securityMatcher(gatewayPaths(gateways))
-                .x509(x509 -> x509
-                        .subjectPrincipalRegex("CN=(.*?)(?:,|$)")
-                        .userDetailsService(allowedGateways(gateways)))
-                .authorizeHttpRequests(auth -> auth.anyRequest().hasRole(GATEWAY_ROLE))
+                .oauth2ResourceServer(resource -> resource.jwt(jwt -> jwt.decoder(gatewayTokenDecoder)))
+                .addFilterAfter(new GatewayBindingFilter(gateways), BearerTokenAuthenticationFilter.class)
+                .authorizeHttpRequests(auth -> auth.anyRequest().hasAuthority("SCOPE_" + gateways.token().scope()))
                 .csrf(AbstractHttpConfigurer::disable)
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS));
         return http.build();
@@ -51,16 +56,17 @@ public class SecurityConfig {
         return http.build();
     }
 
-    /** A certificate name is a gateway only if it is on telecom.gateways.allowed. */
+    /**
+     * Checks a gateway's access token with the token server's public keys (/oauth2/jwks, read over HTTPS
+     * trusting only the dev CA, and read again when a token has a key id it doesn't know yet).
+     */
     @Bean
-    UserDetailsService allowedGateways(GatewayProperties gateways) {
-        return name -> {
-            if (!gateways.allowed().contains(name)) {
-                throw new UsernameNotFoundException("Gateway " + name + " is not allowed");
-            }
-            // no password: the private key proved who it is in the TLS handshake
-            return User.withUsername(name).password("").roles(GATEWAY_ROLE).build();
-        };
+    JwtDecoder gatewayTokenDecoder(GatewayProperties gateways, RestTemplateBuilder rest, SslBundles bundles) {
+        NimbusJwtDecoder decoder = NimbusJwtDecoder.withJwkSetUri(gateways.token().jwkSetUri())
+                .restOperations(rest.sslBundle(bundles.getBundle("token-server-client")).build())
+                .build();
+        decoder.setJwtValidator(GatewayTokens.validator(gateways.token()));
+        return decoder;
     }
 
     // plain Ant matchers: /ws is served by the SOAP servlet, not by Spring MVC

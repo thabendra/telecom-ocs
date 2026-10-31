@@ -45,10 +45,16 @@ public class SoapChargingClient implements ChargingClient {
 
     private final RestClient http;
     private final String clientId;
+    private final AccessTokens tokens;
 
     public SoapChargingClient(RestClient.Builder builder, String backendUrl, String clientId) {
+        this(builder, backendUrl, clientId, AccessTokens.NONE);
+    }
+
+    public SoapChargingClient(RestClient.Builder builder, String backendUrl, String clientId, AccessTokens tokens) {
         this.http = builder.baseUrl(backendUrl).build();
         this.clientId = clientId;
+        this.tokens = tokens;
     }
 
     @Override
@@ -76,6 +82,10 @@ public class SoapChargingClient implements ChargingClient {
 
     // sends the envelope and returns the first element inside soapenv:Body (the ...Response element)
     private SoapAnswer call(String key, String payload) {
+        return AccessTokens.refreshOnce(tokens, () -> send(key, payload));
+    }
+
+    private SoapAnswer send(String key, String payload) {
         try {
             ResponseEntity<String> response = http.post()
                     .uri(PATH)
@@ -83,6 +93,7 @@ public class SoapChargingClient implements ChargingClient {
                     .header("SOAPAction", "\"\"")
                     .header("Idempotency-Key", key)
                     .header("X-Client-Id", clientId)
+                    .headers(headers -> AccessTokens.bearer(headers, tokens.current()))
                     .body(ENVELOPE.formatted(SOAP_ENV, NAMESPACE, payload))
                     .retrieve()
                     .toEntity(String.class);

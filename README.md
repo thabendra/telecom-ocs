@@ -102,7 +102,45 @@ Gateway                                  Backend (CHARGING PL/SQL package, V7)
 - A report above the grant is capped at the grant (the gateway never lets more through).
 - Every procedure locks the subscriber row first, so charging for one subscriber runs one at a time.
 
-## Gateway security: mTLS on its own port (SE-1)
+## Gateway security (group 3: SE-1 to SE-5)
+
+The certificate says **who** the gateway is; the access token says **what it may do**. A gateway
+call passes four checks:
+
+```
+1. Gateway ──mTLS, client_id──► token-server :9443 /oauth2/token        (SE-2, client credentials)
+           ◄── JWT { iss, sub=pgw-colombo-01, aud=charging-api, exp=+5 min,
+                     scope=charging:write, cnf.x5t#S256 = certificate thumbprint }
+2. Gateway ══mTLS══ Authorization: Bearer JWT ══► backend :8443
+     a. TLS handshake: certificate from our CA, not expired                  SE-1
+     b. JWT: signature (token server's /oauth2/jwks), iss, aud, exp          SE-3
+     c. certificate name allowed, token issued to it, cnf = this certificate SE-1, SE-3, SE-4
+     d. scope charging:write                                                 SE-5
+```
+
+| Problem | Answer |
+|---|---|
+| No / foreign / expired certificate | TLS handshake fails |
+| No token, expired, wrong `iss` or `aud`, bad signature | `401` |
+| Token bound to another certificate, or not bound (`cnf`) | `401`: a stolen token is useless |
+| Certificate name not allowed, or a token issued to another gateway | `403` |
+| Token without `charging:write` | `403` |
+
+### Token server (SE-2, SE-4)
+
+`token-server/` is a separate Spring Boot app built on **Spring Authorization Server**:
+
+- Client credentials grant only, one client per gateway (`telecom.token.clients`).
+- Clients authenticate with **`tls_client_auth`** (RFC 8705): the certificate's subject must match the
+  client, so there is no shared secret to leak or rotate.
+- Access tokens are JWTs signed with RSA, valid 5 minutes, with `aud=charging-api` and the bound
+  certificate thumbprint `cnf.x5t#S256`. Asking for a scope the client doesn't have is `invalid_scope`.
+- `/oauth2/jwks` publishes the public key, readable without a certificate (`client-auth: want`).
+
+The gateway simulator fetches a token at the start, reuses it until 30 s before it expires, and on a
+`401` fetches a new one once and sends the call again.
+
+### mTLS on its own port (SE-1)
 
 The application has two doors:
 
@@ -113,10 +151,9 @@ Customers/admin ─► :8080  /api/**                           telecom.public-p
 
 - **Port 8443 (gateway port)** needs a client certificate signed by our private CA. A missing,
   expired or foreign certificate fails in the TLS handshake, before any code runs.
-- **Who is calling** comes from the certificate: Spring Security reads its name (`CN=pgw-colombo-01`)
-  and lets it in only if it is on `telecom.gateways.allowed`; a valid certificate with another name
-  gets `403`. That name also scopes the idempotency keys, so an `X-Client-Id` header can't borrow
-  another gateway's keys.
+- **Who is calling** comes from the certificate: its name (`CN=pgw-colombo-01`) must be on
+  `telecom.gateways.allowed` and be the gateway the token was issued to. That name also scopes the
+  idempotency keys, so an `X-Client-Id` header can't borrow another gateway's keys.
 - **Each API only on its own door** (`PortRuleFilter`): the gateway API on 8080, or the public API
   on 8443, answers `404`.
 
@@ -129,6 +166,7 @@ scripts/generate-dev-certs.sh   # certs/: dev CA, backend cert for localhost, ga
 | File in `certs/` | Used by |
 |---|---|
 | `backend.p12` | backend key store: its certificate + private key for the gateway port |
+| `token-server.p12` | token server key store (HTTPS on 9443) |
 | `gateway-ca-truststore.p12` | trust store with only the dev CA (backend and gateways) |
 | `pgw-colombo-01.p12`, `pgw-kandy-01.p12` | gateway key stores (allowed gateways) |
 | `pgw-unknown-99.p12` | signed by our CA but not allowed (`403`) |
@@ -270,21 +308,24 @@ because the backend is slow.
 ## Run locally
 
 ```bash
-scripts/generate-dev-certs.sh # test certificates for the gateway port (once)
-docker compose up -d          # Oracle Database Free (ready in about a minute) + Redis
-mvn spring-boot:run           # gateway port 8443 (mTLS) + public port 8080; Flyway creates the schema
+scripts/generate-dev-certs.sh          # test certificates (once)
+docker compose up -d                   # Oracle Database Free (ready in about a minute) + Redis
+mvn -f token-server/pom.xml spring-boot:run   # token server on 9443
+mvn spring-boot:run                    # gateway port 8443 (mTLS + token) + public port 8080
 ```
 
 The SOAP API (WSDL at https://localhost:8443/ws/subscribers.wsdl) is on the gateway port, so a
-client needs a gateway certificate, e.g. in SoapUI the key store `certs/pgw-colombo-01.p12`
-(password `changeit`). Sample requests are in `requests/`:
+client needs a gateway certificate and an access token. Sample requests are in `requests/`:
 
 ```bash
 TLS="--cert-type P12 --cert certs/pgw-colombo-01.p12:changeit --cacert certs/ca.pem"
-curl -s $TLS -H "Content-Type: text/xml" -d @requests/create-subscriber.xml https://localhost:8443/ws
-curl -s $TLS -H "Content-Type: text/xml" -d @requests/activate-package.xml https://localhost:8443/ws
-curl -s $TLS -H "Content-Type: text/xml" -d @requests/record-usage.xml https://localhost:8443/ws
-curl -s $TLS -H "Content-Type: text/xml" -H "Idempotency-Key: $(uuidgen)" \
+TOKEN=$(curl -s $TLS -d grant_type=client_credentials -d client_id=pgw-colombo-01 -d scope=charging:write \
+        https://localhost:9443/oauth2/token | sed 's/.*"access_token":"\([^"]*\)".*/\1/')
+AUTH="Authorization: Bearer $TOKEN"
+curl -s $TLS -H "$AUTH" -H "Content-Type: text/xml" -d @requests/create-subscriber.xml https://localhost:8443/ws
+curl -s $TLS -H "$AUTH" -H "Content-Type: text/xml" -d @requests/activate-package.xml https://localhost:8443/ws
+curl -s $TLS -H "$AUTH" -H "Content-Type: text/xml" -d @requests/record-usage.xml https://localhost:8443/ws
+curl -s $TLS -H "$AUTH" -H "Content-Type: text/xml" -H "Idempotency-Key: $(uuidgen)" \
      -d @requests/start-session.xml https://localhost:8443/ws
 curl -s http://localhost:8080/api/subscribers/94771234567/quota
 ```
@@ -299,8 +340,15 @@ mvn test
 - `SubscriberServiceTest`, `OracleErrorsTest`: unit tests with Mockito, including mapping of Oracle errors.
 - `GatewayTlsTest`: real HTTPS on both ports: allowed gateway over REST and SOAP, no certificate,
   foreign CA and expired certificate (handshake fails), not-allowed gateway (`403`), each API refused
-  on the other port (`404`). MockMvc tests skip TLS and send a gateway certificate with
+  on the other port (`404`). MockMvc tests skip TLS and send a gateway certificate plus token with
   `TestCerts.gateway(...)`.
+- `GatewayTokenTest`: access tokens over real mTLS: valid, missing, expired, wrong `aud` / `iss`,
+  foreign signing key (`401`), no `charging:write` (`403`), another gateway's token (`403`), bound to
+  another certificate or unbound (`401`), SOAP needs a token too. Tokens come from `TestTokens`,
+  signed with a test key that the test context trusts.
+- `token-server`: `TokenServerTest` gets real tokens over mTLS: claims (`sub`, `aud`, `scope`, `cnf`,
+  5 min), another gateway's certificate, no certificate and an unknown client (`401`), a scope it
+  doesn't have (`invalid_scope`), and the public key set.
 - `SubscriberEndpointTest`: SOAP tests against a real Oracle container (Testcontainers): XSD validation,
   faults, plan change and the audit table.
 - `ChargingControllerTest` (REST) and `ChargingEndpointTest` (SOAP): online charging against Oracle:
@@ -311,8 +359,8 @@ mvn test
 - `gateway-simulator`: `GatewaySimulatorTest` checks the simulator's requests against a mocked backend;
   `ChargingClientRetryTest` checks the retry policy (backoff, jitter, budget, circuit breaker, metrics);
   `SoapChargingClientTest` and `RestChargingClientTest` check each protocol client,
-  `ChargingClientsTest` the choice between them, and `GatewayHttpTest` the HTTPS client with the
-  gateway certificate.
+  `ChargingClientsTest` the choice between them, `GatewayHttpTest` the HTTPS client with the
+  gateway certificate, and `TokenClientTest` getting, caching and refreshing access tokens.
 - `UsageEndpointTest`: usage charging against Oracle: app packages, add-ons, splitting across buckets,
   pay as you go, fair usage throttling, quota order and plan data refill.
 

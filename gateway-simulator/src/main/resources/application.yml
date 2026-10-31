@@ -22,7 +22,10 @@ spring:
 simulator:
   backend-url: https://localhost:8443   # the backend's gateway port (mTLS)
   tls-bundle: gateway            # empty = plain HTTP (no client certificate)
-  client-id: pgw-colombo-01      # sent as X-Client-Id; with mTLS the backend uses the certificate name instead
+  client-id: ${GATEWAY_CERT:pgw-colombo-01}   # = certificate name; token client_id, and sent as X-Client-Id
+  token:                         # SE-2: OAuth2 client credentials; empty url = no Authorization header
+    url: ${TOKEN_URL:https://localhost:9443/oauth2/token}
+    scope: charging:write
   protocol: REST                 # REST (/charging/v1/sessions) or SOAP (/ws StartSession/UpdateSession/ReleaseSession)
   msisdn: "94771234567"
   app: YOUTUBE                   # YOUTUBE, WHATSAPP, FACEBOOK or GENERAL (what DPI detected)

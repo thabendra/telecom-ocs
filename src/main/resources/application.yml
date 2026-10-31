@@ -34,6 +34,12 @@ spring:
             location: ${TLS_DIR:file:certs}/gateway-ca-truststore.p12
             password: ${TLS_TRUSTSTORE_PASSWORD:changeit}
             type: PKCS12
+        # SE-3: to read the token server's public keys over HTTPS (its certificate is from the dev CA)
+        token-server-client:
+          truststore:
+            location: ${TLS_DIR:file:certs}/gateway-ca-truststore.p12
+            password: ${TLS_TRUSTSTORE_PASSWORD:changeit}
+            type: PKCS12
 
 # Two doors (SE-1 + SE-8):
 #   server.port         gateway API, mTLS: a client certificate from our CA is required
@@ -55,6 +61,12 @@ telecom:
     allowed:
       - pgw-colombo-01
       - pgw-kandy-01
+    # SE-3 / SE-5: every gateway call also needs an access token from the token server
+    token:
+      issuer: ${TOKEN_ISSUER:https://localhost:9443}
+      jwk-set-uri: ${TOKEN_JWKS_URI:https://localhost:9443/oauth2/jwks}
+      audience: charging-api
+      scope: charging:write
   idempotency:
     # write calls that must carry an Idempotency-Key header (ID-1)
     paths:

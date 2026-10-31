@@ -1,7 +1,9 @@
 package com.thabendra.telecom;
 
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.client.JdkClientHttpRequestFactory;
+import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.test.web.servlet.request.RequestPostProcessor;
 import org.springframework.web.client.RestClient;
 
@@ -22,8 +24,9 @@ import static org.springframework.security.test.web.servlet.request.SecurityMock
  * The test certificates in certs/ (made by scripts/generate-dev-certs.sh):
  * <ul>
  *   <li>{@link #gateway(String)}: for MockMvc, which skips real TLS; acts as if the handshake
- *       already accepted that gateway's certificate</li>
- *   <li>{@link #https(int, String)}: a real HTTPS client for the mTLS port, showing that certificate</li>
+ *       already accepted that gateway's certificate, plus its access token</li>
+ *   <li>{@link #https(int, String)}: a real HTTPS client for the mTLS port, showing that certificate
+ *       and sending its access token</li>
  * </ul>
  */
 public final class TestCerts {
@@ -37,21 +40,38 @@ public final class TestCerts {
     private TestCerts() {
     }
 
-    /** MockMvc: the request comes with this gateway's verified certificate. */
+    /**
+     * MockMvc: the request comes with this gateway's verified certificate and a valid access token
+     * for it (TestTokens). Added after another gateway(...), it replaces both.
+     */
     public static RequestPostProcessor gateway(String name) {
+        RequestPostProcessor certificate;
         try (InputStream pem = Files.newInputStream(file(name + ".pem"))) {
-            return x509((X509Certificate) CertificateFactory.getInstance("X.509").generateCertificate(pem));
+            certificate = x509((X509Certificate) CertificateFactory.getInstance("X.509").generateCertificate(pem));
         } catch (Exception e) {
             throw new IllegalStateException(e);
         }
+        String token = TestTokens.token(name);
+        return request -> {
+            MockHttpServletRequest withCertificate = certificate.postProcessRequest(request);
+            withCertificate.removeHeader(HttpHeaders.AUTHORIZATION);
+            withCertificate.addHeader(HttpHeaders.AUTHORIZATION, "Bearer " + token);
+            return withCertificate;
+        };
     }
 
     /**
-     * Real HTTPS to the gateway port on localhost; trusts only our CA and checks the host name.
+     * Real HTTPS to the gateway port on localhost, showing that certificate and sending a valid access
+     * token for it; trusts only our CA and checks the host name.
      *
      * @param certificate key store name in certs/ (e.g. pgw-colombo-01, stranger), or null for none
      */
     public static RestClient https(int port, String certificate) {
+        return https(port, certificate, certificate == null ? null : TestTokens.token(certificate));
+    }
+
+    /** Real HTTPS with this certificate and this access token (null: no Authorization header). */
+    public static RestClient https(int port, String certificate, String token) {
         try {
             KeyStore trust = load("gateway-ca-truststore");
             TrustManagerFactory trustManagers = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
@@ -64,10 +84,13 @@ public final class TestCerts {
             SSLContext tls = SSLContext.getInstance("TLS");
             tls.init(keyManagers == null ? null : keyManagers.getKeyManagers(), trustManagers.getTrustManagers(), null);
             HttpClient client = HttpClient.newBuilder().sslContext(tls).build();
-            return RestClient.builder()
+            RestClient.Builder builder = RestClient.builder()
                     .baseUrl("https://localhost:" + port)
-                    .requestFactory(new JdkClientHttpRequestFactory(client))
-                    .build();
+                    .requestFactory(new JdkClientHttpRequestFactory(client));
+            if (token != null) {
+                builder.defaultHeader(HttpHeaders.AUTHORIZATION, "Bearer " + token);
+            }
+            return builder.build();
         } catch (Exception e) {
             throw new IllegalStateException(e);
         }

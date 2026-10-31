@@ -13,14 +13,15 @@ import java.lang.annotation.Target;
 /**
  * One setup for every integration test class, so they all share one Spring context and one pair of
  * Oracle + Redis containers. Both doors start on free ports: the mTLS gateway port (server.port, read
- * with @LocalServerPort) and the plain public port (ServerPorts.publicPort()).
+ * with @LocalServerPort) and the plain public port (ServerPorts.publicPort()). Gateway tokens are
+ * checked with the test key from TestTokens.
  * Needs Docker, and the test certificates from scripts/generate-dev-certs.sh.
  */
 @Target(ElementType.TYPE)
 @Retention(RetentionPolicy.RUNTIME)
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT, properties = "telecom.public-port=0")
 @AutoConfigureMockMvc
-@Import(TestcontainersConfig.class)
+@Import({TestcontainersConfig.class, TestTokens.Decoder.class})
 @Testcontainers(disabledWithoutDocker = true)
 public @interface IntegrationTest {
 }

@@ -1,0 +1,40 @@
+spring:
+  application:
+    name: token-server
+  # TEST-ONLY certificate files from scripts/generate-dev-certs.sh (run from the project root)
+  ssl:
+    bundle:
+      jks:
+        token-server:
+          key:
+            alias: token-server
+          keystore:
+            location: ${TLS_DIR:file:../certs}/token-server.p12
+            password: ${TLS_KEYSTORE_PASSWORD:changeit}
+            type: PKCS12
+          truststore:
+            location: ${TLS_DIR:file:../certs}/gateway-ca-truststore.p12
+            password: ${TLS_TRUSTSTORE_PASSWORD:changeit}
+            type: PKCS12
+
+server:
+  port: ${TOKEN_SERVER_PORT:9443}
+  ssl:
+    bundle: token-server
+    # "want": a gateway shows its certificate to get a token (tls_client_auth), while the public
+    # key set (/oauth2/jwks) and the discovery document stay readable without one
+    client-auth: want
+
+telecom:
+  token:
+    issuer: ${TOKEN_ISSUER:https://localhost:9443}
+    audience: charging-api            # the aud claim the backend's gateway API requires (SE-3)
+    access-token-ttl: 5m              # short life: a leaked token is soon useless
+    # one OAuth2 client per gateway; client_id = the certificate name, authenticated by that certificate
+    clients:
+      - id: pgw-colombo-01
+        subject: CN=pgw-colombo-01,O=Telecom Dev
+        scopes: [charging:write, notify:read]
+      - id: pgw-kandy-01
+        subject: CN=pgw-kandy-01,O=Telecom Dev
+        scopes: [charging:write, notify:read]

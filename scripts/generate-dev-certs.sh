@@ -5,6 +5,7 @@
 #   certs/ca.p12 / ca.pem                 "Telecom Dev CA": signs every gateway and the backend
 #   certs/gateway-ca-truststore.p12        trust store with only that CA (backend and gateways use it)
 #   certs/backend.p12                      backend server certificate for localhost / 127.0.0.1
+#   certs/token-server.p12                 token server (SE-2) certificate for localhost / 127.0.0.1
 #   certs/pgw-colombo-01.p12 (.pem)        gateway client certificates
 #   certs/pgw-kandy-01.p12   (.pem)
 #   certs/pgw-unknown-99.p12 (.pem)        signed by our CA, but not in telecom.gateways.allowed (403)
@@ -48,6 +49,7 @@ keytool -importcert -noprompt -alias ca -file "$DIR/ca.pem" -keystore "$DIR/gate
   -storetype PKCS12 -storepass "$PASS"
 
 issue backend "CN=localhost, O=Telecom Dev" "SAN=dns:localhost,ip:127.0.0.1" ca -validity 825 -ext EKU=serverAuth
+issue token-server "CN=localhost, O=Telecom Dev Token Server" "SAN=dns:localhost,ip:127.0.0.1" ca -validity 825 -ext EKU=serverAuth
 issue pgw-colombo-01 "CN=pgw-colombo-01, O=Telecom Dev" EKU=clientAuth ca -validity 825
 issue pgw-kandy-01 "CN=pgw-kandy-01, O=Telecom Dev" EKU=clientAuth ca -validity 825
 issue pgw-unknown-99 "CN=pgw-unknown-99, O=Telecom Dev" EKU=clientAuth ca -validity 825

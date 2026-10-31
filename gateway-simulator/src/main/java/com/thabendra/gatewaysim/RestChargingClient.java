@@ -17,10 +17,16 @@ public class RestChargingClient implements ChargingClient {
 
     private final RestClient http;
     private final String clientId;
+    private final AccessTokens tokens;
 
     public RestChargingClient(RestClient.Builder builder, String backendUrl, String clientId) {
+        this(builder, backendUrl, clientId, AccessTokens.NONE);
+    }
+
+    public RestChargingClient(RestClient.Builder builder, String backendUrl, String clientId, AccessTokens tokens) {
         this.http = builder.baseUrl(backendUrl).build();
         this.clientId = clientId;
+        this.tokens = tokens;
     }
 
     @Override
@@ -42,12 +48,17 @@ public class RestChargingClient implements ChargingClient {
     }
 
     private <T> Answer<T> post(String path, String key, Map<String, Object> body, Class<T> type) {
+        return AccessTokens.refreshOnce(tokens, () -> send(path, key, body, type));
+    }
+
+    private <T> Answer<T> send(String path, String key, Map<String, Object> body, Class<T> type) {
         try {
             ResponseEntity<T> response = http.post()
                     .uri(path)
                     .contentType(MediaType.APPLICATION_JSON)
                     .header("Idempotency-Key", key)
                     .header("X-Client-Id", clientId)
+                    .headers(headers -> AccessTokens.bearer(headers, tokens.current()))
                     .body(body)
                     .retrieve()
                     .toEntity(type);

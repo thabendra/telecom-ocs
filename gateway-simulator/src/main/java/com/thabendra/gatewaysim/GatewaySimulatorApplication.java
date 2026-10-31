@@ -13,6 +13,7 @@ import org.springframework.boot.context.properties.EnableConfigurationProperties
 import org.springframework.boot.ssl.SslBundle;
 import org.springframework.boot.ssl.SslBundles;
 import org.springframework.context.annotation.Bean;
+import org.springframework.http.client.ClientHttpRequestFactory;
 import org.springframework.web.client.RestClient;
 
 import java.time.Clock;
@@ -46,14 +47,32 @@ public class GatewaySimulatorApplication {
         return new RetryingCaller(props.retry(), duration -> Thread.sleep(duration), Clock.systemUTC(), metrics);
     }
 
-    // REST or SOAP from simulator.protocol, wrapped with the retry policy; the simulator only sees the interface.
-    // Both protocols share one HTTP client: per-try timeout (RT-8) and, with simulator.tls-bundle, mTLS (SE-1).
+    // One HTTP client for the backend and the token server: per-try timeout (RT-8) and, with
+    // simulator.tls-bundle, this gateway's certificate (SE-1, and the token server's tls_client_auth)
     @Bean
-    ChargingClient chargingClient(RestClient.Builder builder, SimulatorProperties props, RetryingCaller caller,
-                                  SslBundles sslBundles, @Value("${simulator.tls-bundle:}") String tlsBundle) {
+    ClientHttpRequestFactory gatewayHttp(SimulatorProperties props, SslBundles sslBundles,
+                                         @Value("${simulator.tls-bundle:}") String tlsBundle) {
         SslBundle tls = tlsBundle.isBlank() ? null : sslBundles.getBundle(tlsBundle);
-        return ChargingClients.create(props,
-                builder.requestFactory(GatewayHttp.requestFactory(props.retry().perTryTimeout(), tls)), caller);
+        return GatewayHttp.requestFactory(props.retry().perTryTimeout(), tls);
+    }
+
+    // SE-2: client credentials from the token server; without simulator.token.url no token is sent
+    @Bean
+    AccessTokens accessTokens(ClientHttpRequestFactory gatewayHttp, SimulatorProperties props,
+                              @Value("${simulator.token.url:}") String tokenUrl,
+                              @Value("${simulator.token.scope:charging:write}") String scope) {
+        if (tokenUrl.isBlank()) {
+            return AccessTokens.NONE;
+        }
+        return new TokenClient(RestClient.builder().requestFactory(gatewayHttp).build(), tokenUrl, props.clientId(),
+                scope, Clock.systemUTC());
+    }
+
+    // REST or SOAP from simulator.protocol, wrapped with the retry policy; the simulator only sees the interface
+    @Bean
+    ChargingClient chargingClient(RestClient.Builder builder, ClientHttpRequestFactory gatewayHttp,
+                                  SimulatorProperties props, RetryingCaller caller, AccessTokens accessTokens) {
+        return ChargingClients.create(props, builder.requestFactory(gatewayHttp), caller, accessTokens);
     }
 
     @Bean
