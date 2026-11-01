@@ -1,5 +1,6 @@
 package com.thabendra.telecom.ratelimit;
 
+import com.thabendra.telecom.resilience.RedisCircuitOpenException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -44,8 +45,11 @@ public class GatewayRateLimiter {
         try {
             return shared.tryAcquire(bucket, limit);
         } catch (DataAccessException redisDown) {
-            log.warn("Redis unavailable, rate limiting {} locally at 1/{} of its limit: {}",
-                    bucket, properties.instances(), redisDown.getMessage());
+            // while the circuit is open this is every request, and the breaker has said so once already
+            if (!(redisDown instanceof RedisCircuitOpenException)) {
+                log.warn("Redis unavailable, rate limiting {} locally at 1/{} of its limit: {}",
+                        bucket, properties.instances(), redisDown.getMessage());
+            }
             return local.tryAcquire(bucket, limit.share(properties.instances()));
         }
     }

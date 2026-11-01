@@ -1,5 +1,6 @@
 package com.thabendra.telecom.ratelimit;
 
+import com.thabendra.telecom.TestBreakers;
 import io.lettuce.core.ClientOptions;
 import io.lettuce.core.SslOptions;
 import org.junit.jupiter.api.AfterEach;
@@ -64,7 +65,7 @@ class RedisSecurityTest {
         StringRedisTemplate backend = connect(USER, PASSWORD, true);
 
         // the token bucket Lua script (group 4): HMGET, HSET, PEXPIRE and TIME inside the script
-        Decision decision = new RedisRateLimiter(backend).tryAcquire("pgw-colombo-01",
+        Decision decision = new RedisRateLimiter(backend, TestBreakers.redis()).tryAcquire("pgw-colombo-01",
                 new RateLimitProperties.Limit(10, 5));
         assertThat(decision.allowed()).isTrue();
 

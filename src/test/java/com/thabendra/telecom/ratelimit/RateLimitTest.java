@@ -6,6 +6,7 @@ import com.thabendra.telecom.TestCerts;
 import com.thabendra.telecom.TestData;
 import com.thabendra.telecom.TestUsers;
 import com.thabendra.telecom.idempotency.IdempotencyFilter;
+import com.thabendra.telecom.resilience.RedisBreaker;
 import com.thabendra.telecom.soap.WebServiceConfig;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -48,6 +49,9 @@ class RateLimitTest {
 
     @Autowired
     private RedisRateLimiter shared;
+
+    @Autowired
+    private RedisBreaker redisBreaker;
 
     @Autowired
     private StringRedisTemplate redis;
@@ -160,6 +164,7 @@ class RateLimitTest {
             mvc.perform(start(COLOMBO)).andExpect(status().isCreated());
         } finally {
             docker.unpauseContainerCmd(redisContainer.getContainerId()).exec();
+            redisBreaker.reset();   // shared by all test classes
         }
     }
 

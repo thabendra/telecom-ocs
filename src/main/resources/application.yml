@@ -126,6 +126,23 @@ telecom:
     overrides: {}                  # e.g. pgw-kandy-01: { capacity: 500, refill-per-second: 250 }
     max-in-flight: ${DB_POOL_SIZE:10}
     in-flight-wait: 50ms
+  # group 11: circuit breakers in this backend, towards what it calls
+  circuit:
+    redis:                     # CB-1: many calls per second, so a percentage of the latest calls
+      window-calls: 20
+      minimum-calls: 10
+      failure-percent: 50
+      slow-call: 100ms         # Redis normally answers in a few ms
+      slow-percent: 50
+      open-for: 5s
+      test-calls: 3
+    signing-keys:              # CB-2: rare calls, so failures in a row; the last good keys stay in use
+      failures-to-open: 3
+      open-for: 30s
+      timeout: 2s
+      refresh-every: PT10M     # a key removed at the token server stops being trusted within this time
+      unknown-key-gap: 30s     # tokens with made-up key ids can't flood the token server
+      refresh: true
   # group 8: open charging sessions
   charging:
     session-expiry: 65m        # CH-8: no update for this long (grant validity 1 h + 5 min) -> expired

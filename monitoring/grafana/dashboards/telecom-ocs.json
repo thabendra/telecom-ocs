@@ -57,6 +57,15 @@
         { "refId": "A", "legendFormat": "{{result}}", "expr": "sum by (result) (rate(ocs_otp_checked_total[5m])) * 60" },
         { "refId": "B", "legendFormat": "sent", "expr": "sum(rate(ocs_otp_sent_total[5m])) * 60" }
       ]
+    },
+    {
+      "id": 8, "type": "timeseries", "title": "Circuit breakers: copies open, and calls refused per second",
+      "gridPos": { "x": 0, "y": 32, "w": 24, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "refId": "A", "legendFormat": "{{name}} open", "expr": "sum by (name) (ocs_circuit_state{state=\"open\"})" },
+        { "refId": "B", "legendFormat": "{{name}} refused", "expr": "sum by (name) (rate(ocs_circuit_rejected_total[1m]))" }
+      ]
     }
   ]
 }

@@ -1,5 +1,6 @@
 package com.thabendra.telecom.charging;
 
+import com.thabendra.telecom.resilience.RedisBreaker;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataAccessException;
@@ -26,10 +27,12 @@ public class SessionCache {
 
     private final StringRedisTemplate redis;
     private final ChargingProperties properties;
+    private final RedisBreaker breaker;
 
-    public SessionCache(StringRedisTemplate redis, ChargingProperties properties) {
+    public SessionCache(StringRedisTemplate redis, ChargingProperties properties, RedisBreaker breaker) {
         this.redis = redis;
         this.properties = properties;
+        this.breaker = breaker;
     }
 
     static String key(String sessionId) {
@@ -39,7 +42,8 @@ public class SessionCache {
     /** After a start or an update: kept as long as the session can live without an update (CH-8). */
     public void remember(String sessionId, String gateway, String msisdn) {
         try {
-            redis.opsForValue().set(key(sessionId), gateway + "|" + msisdn, properties.sessionExpiry());
+            breaker.run(() -> redis.opsForValue().set(key(sessionId), gateway + "|" + msisdn,
+                    properties.sessionExpiry()));
         } catch (DataAccessException redisDown) {
             log.debug("session cache not updated for {}: {}", sessionId, redisDown.getMessage());
         }
@@ -47,7 +51,7 @@ public class SessionCache {
 
     public Optional<Owner> find(String sessionId) {
         try {
-            String value = redis.opsForValue().get(key(sessionId));
+            String value = breaker.call(() -> redis.opsForValue().get(key(sessionId)));
             if (value == null || value.indexOf('|') < 0) {
                 return Optional.empty();
             }
@@ -60,7 +64,7 @@ public class SessionCache {
 
     public void forget(String sessionId) {
         try {
-            redis.delete(key(sessionId));
+            breaker.run(() -> redis.delete(key(sessionId)));
         } catch (DataAccessException redisDown) {
             log.debug("session cache entry not removed for {}: {}", sessionId, redisDown.getMessage());
         }

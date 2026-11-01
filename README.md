@@ -509,6 +509,47 @@ for everybody. Without Redis nobody looks heavy, which only means normal grants.
 **Alerts.** `monitoring/alerts.yml` (loaded by Prometheus): new heavy users, gateway commands that
 failed, many expired sessions, and the database bulkhead refusing requests.
 
+## Circuit breakers in the backend (group 11)
+
+A circuit breaker lives in the **caller**: it counts the results of the calls it makes and stops calling
+when the other side is in trouble. The gateway has one towards this backend (section I); these are the
+backend's own, towards what **it** calls. Resilience4j keeps the state; our code asks permission before a
+call (`tryAcquirePermission`) and reports the result (`onSuccess` / `onError`).
+
+| | Redis (CB-1) | Signing keys (CB-2), one per server |
+|---|---|---|
+| **Calls** | many per second | rare |
+| **Opens when** | 50 % of the last 20 calls failed, or were slower than 100 ms (at least 10 calls) | 3 failures in a row |
+| **Stays open** | 5 s | 30 s |
+| **Half-open** | 3 test calls | 1 test call |
+| **Counts as failure** | connection errors, timeouts (an error answer like `NOPERM` means Redis is alive) | no answer, 5xx (a 404 means the server is alive) |
+| **While open** | each caller's fallback, at once | the keys already in memory |
+
+**Redis (CB-1).** Without it, a hanging Redis costs each request 500 ms per Redis call, far above a
+gateway's 200 ms limit. `RedisBreaker` wraps every Redis call. When open it throws
+`RedisCircuitOpenException`, a `DataAccessException`, so the fallbacks that already existed take over
+without waiting:
+
+| Caller | Fallback |
+|---|---|
+| Rate limit | this copy's local bucket |
+| Idempotency | runs without Redis; Oracle's request number still stops a double charge |
+| Session cache | Oracle checks the owner |
+| Usage window | nobody looks heavy: normal grants |
+| Customer login (OTP) | none, the codes live in Redis: `503` + `Retry-After` |
+
+**Signing keys (CB-2).** Spring's default key cache forgets its keys after 15 minutes, so a longer outage
+of the token server would refuse every token although the keys hadn't changed. `SigningKeys` keeps the
+last good keys. It fetches when it has none yet, when a token has an unknown key id (at most once per
+30 s, so made-up key ids can't flood that server), and every 10 minutes, so a key removed at the server
+stops being trusted. A failed fetch keeps the keys. The token server and Keycloak have one breaker each.
+
+**Seeing them (CB-3).** `ocs_circuit_state{name, state}` is 1 for the current state,
+`ocs_circuit_rejected_total{name}` counts refused calls, `/actuator/health` shows `circuit`, Grafana has a
+panel, and the `CircuitBreakerOpen` alert fires after 2 minutes open. Every change of state is logged
+once. The health entry stays UP with a breaker open: the copy is working on its fallback, and restarting
+it would help nobody.
+
 ## Gateway simulator
 
 `gateway-simulator/` is a separate Spring Boot command line app that plays the network gateway: it
@@ -722,6 +763,10 @@ mvn test
   a block, the alert counted once, old usage sliding out, release usage counting. `GrantPolicyTest`
   (unit) checks the rules with a faked window, also with Redis down; `ChargingEndpointTest` a SOAP start
   without `requestedMb`.
+- `RedisCircuitTest`: real Redis paused: the breaker opens, charging goes on without the timeouts, login
+  says 503, the health page shows it; Redis back: test calls close it. `RedisBreakerTest` (unit): what
+  counts as a failure, slow calls, half-open both ways, metrics. `SigningKeysTest`: the last good keys
+  during an outage (also with the real decoder over HTTP), made-up key ids, a removed key, the breaker.
 - `UsageEndpointTest`: usage charging against Oracle: app packages, add-ons, splitting across buckets,
   pay as you go, fair usage throttling, quota order and plan data refill.
 

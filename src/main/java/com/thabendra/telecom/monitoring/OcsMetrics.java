@@ -1,10 +1,12 @@
 package com.thabendra.telecom.monitoring;
 
+import io.github.resilience4j.circuitbreaker.CircuitBreaker;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.springframework.stereotype.Component;
 
+import java.util.List;
 import java.util.function.Supplier;
 
 /**
@@ -19,6 +21,7 @@ import java.util.function.Supplier;
  *   ocs_push_commands{status}                                   PENDING / SENT / FAILED commands (group 5)
  *   ocs_sessions_expired_total                                  sessions a gateway never released (CH-8)
  *   ocs_heavy_users_flagged_total                               subscribers who became heavy users (RL-3)
+ *   ocs_circuit_state{name, state}, ocs_circuit_rejected_total  circuit breakers: redis, key servers (CB-3)
  * </pre>
  * Tags only take values from small fixed sets (the allowed gateways, a few results), never a phone
  * number or IP: every tag value is a separate time series in Prometheus.
@@ -61,6 +64,26 @@ public class OcsMetrics {
         Gauge.builder("ocs.bulkhead.free.slots", freeSlots)
                 .description("Database slots free in this backend copy right now")
                 .register(registry);
+    }
+
+    /** CB-3: one gauge per state, 1 for the state the breaker is in now, 0 for the others. */
+    public void circuit(String name, Supplier<CircuitBreaker.State> state) {
+        for (CircuitBreaker.State candidate : List.of(CircuitBreaker.State.CLOSED, CircuitBreaker.State.OPEN,
+                CircuitBreaker.State.HALF_OPEN)) {
+            Gauge.builder("ocs.circuit.state", () -> state.get() == candidate ? 1 : 0)
+                    .description("Circuit breaker state: 1 for the current state")
+                    .tag("name", name)
+                    .tag("state", candidate.name().toLowerCase())
+                    .register(registry);
+        }
+    }
+
+    /** CB-3: calls refused at once by an open breaker. */
+    public void circuitRejected(String name) {
+        Counter.builder("ocs.circuit.rejected")
+                .description("Calls not sent because the circuit breaker is open")
+                .tag("name", name)
+                .register(registry).increment();
     }
 
     /** RL-3: a subscriber just crossed the heavy-user threshold (an alert, never a block). */

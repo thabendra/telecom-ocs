@@ -2,6 +2,7 @@ package com.thabendra.telecom.idempotency;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.thabendra.telecom.resilience.RedisBreaker;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.RedisScript;
@@ -25,11 +26,14 @@ public class IdempotencyStore {
     private final StringRedisTemplate redis;
     private final ObjectMapper json;
     private final IdempotencyProperties properties;
+    private final RedisBreaker breaker;
 
-    public IdempotencyStore(StringRedisTemplate redis, ObjectMapper json, IdempotencyProperties properties) {
+    public IdempotencyStore(StringRedisTemplate redis, ObjectMapper json, IdempotencyProperties properties,
+                            RedisBreaker breaker) {
         this.redis = redis;
         this.json = json;
         this.properties = properties;
+        this.breaker = breaker;
     }
 
     static String redisKey(String clientId, String idempotencyKey) {
@@ -42,19 +46,21 @@ public class IdempotencyStore {
      * The script runs atomically, so two copies of a retry can never both get the lock.
      */
     public Optional<IdempotencyRecord> claimOrFind(String redisKey, String requestHash) {
-        String existing = redis.execute(CLAIM_SCRIPT, List.of(redisKey),
-                write(IdempotencyRecord.inProgress(requestHash)), String.valueOf(properties.lockTtl().toMillis()));
+        String lock = write(IdempotencyRecord.inProgress(requestHash));
+        String existing = breaker.call(() -> redis.execute(CLAIM_SCRIPT, List.of(redisKey),
+                lock, String.valueOf(properties.lockTtl().toMillis())));
         return Optional.ofNullable(existing).map(this::read);
     }
 
     /** Replaces the lock with the final response, kept for resultTtl. */
     public void saveResult(String redisKey, IdempotencyRecord result) {
-        redis.opsForValue().set(redisKey, write(result), properties.resultTtl());
+        String value = write(result);
+        breaker.run(() -> redis.opsForValue().set(redisKey, value, properties.resultTtl()));
     }
 
     /** Drops the key so the caller may retry (used after a 5xx or a crash, ID-9). */
     public void release(String redisKey) {
-        redis.delete(redisKey);
+        breaker.run(() -> redis.delete(redisKey));
     }
 
     private String write(IdempotencyRecord record) {

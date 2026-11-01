@@ -1,6 +1,7 @@
 package com.thabendra.telecom.idempotency;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.thabendra.telecom.resilience.RedisCircuitOpenException;
 import com.thabendra.telecom.web.ErrorResponses;
 import com.thabendra.telecom.web.FilterOrder;
 import jakarta.servlet.FilterChain;
@@ -113,8 +114,11 @@ public class IdempotencyFilter extends OncePerRequestFilter {
         try {
             existing = store.claimOrFind(redisKey, requestHash);
         } catch (DataAccessException redisDown) {
-            log.warn("Redis unavailable, running {} {} without idempotency: {}",
-                    request.getMethod(), pathOf(request), redisDown.getMessage());
+            // while the circuit is open this is every request, and the breaker has said so once already
+            if (!(redisDown instanceof RedisCircuitOpenException)) {
+                log.warn("Redis unavailable, running {} {} without idempotency: {}",
+                        request.getMethod(), pathOf(request), redisDown.getMessage());
+            }
             chain.doFilter(cached, response);
             return;
         }

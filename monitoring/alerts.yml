@@ -32,3 +32,12 @@ groups:
         labels: { severity: critical }
         annotations:
           summary: "Requests refused with 503 because no database slot was free"
+
+      # CB-3: a backend copy has stopped calling Redis or a key server. It works on its fallback, so
+      # nothing is down for users yet, but the thing it calls needs a look
+      - alert: CircuitBreakerOpen
+        expr: max by (name) (ocs_circuit_state{state="open"}) == 1
+        for: 2m
+        labels: { severity: warning }
+        annotations:
+          summary: "The {{ $labels.name }} circuit breaker has been open for 2 minutes"

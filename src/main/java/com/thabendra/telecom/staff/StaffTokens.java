@@ -1,5 +1,7 @@
 package com.thabendra.telecom.staff;
 
+import com.thabendra.telecom.resilience.SigningKeysFactory;
+import org.springframework.boot.web.client.RestTemplateBuilder;
 import org.springframework.core.convert.converter.Converter;
 import org.springframework.security.authentication.AbstractAuthenticationToken;
 import org.springframework.security.authentication.AuthenticationManager;
@@ -41,9 +43,9 @@ public class StaffTokens {
     private final StaffProperties properties;
     private final NimbusJwtDecoder decoder;
 
-    public StaffTokens(StaffProperties properties) {
+    public StaffTokens(StaffProperties properties, SigningKeysFactory signingKeys, RestTemplateBuilder rest) {
         this.properties = properties;
-        this.decoder = NimbusJwtDecoder.withJwkSetUri(properties.jwkSetUri()).build();
+        this.decoder = signingKeys.decoder("keycloak", properties.jwkSetUri(), rest);   // CB-2
         this.decoder.setJwtValidator(validator(properties));
     }
 

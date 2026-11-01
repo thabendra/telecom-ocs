@@ -2,6 +2,7 @@ package com.thabendra.telecom.rest;
 
 import com.thabendra.telecom.customer.InvalidOtpException;
 import com.thabendra.telecom.customer.OtpCooldownException;
+import com.thabendra.telecom.resilience.RedisCircuitOpenException;
 import com.thabendra.telecom.subscriber.BusinessRuleException;
 import com.thabendra.telecom.subscriber.NotFoundException;
 import org.springframework.http.HttpHeaders;
@@ -24,6 +25,15 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
     @ExceptionHandler(BusinessRuleException.class)
     public ProblemDetail businessRule(BusinessRuleException e) {
         return ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, e.getMessage());
+    }
+
+    // the login codes live in Redis, so logging in has no fallback: "try again soon" (the others fall back)
+    @ExceptionHandler(RedisCircuitOpenException.class)
+    public ResponseEntity<ProblemDetail> redisOpen(RedisCircuitOpenException e) {
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                .header(HttpHeaders.RETRY_AFTER, "5")
+                .body(ProblemDetail.forStatusAndDetail(HttpStatus.SERVICE_UNAVAILABLE,
+                        "Login is unavailable for a moment, please try again soon"));
     }
 
     // CU-1: a wrong, used, expired or locked login code

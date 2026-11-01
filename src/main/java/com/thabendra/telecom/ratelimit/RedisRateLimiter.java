@@ -1,5 +1,6 @@
 package com.thabendra.telecom.ratelimit;
 
+import com.thabendra.telecom.resilience.RedisBreaker;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.RedisScript;
@@ -20,9 +21,11 @@ public class RedisRateLimiter {
             RedisScript.of(new ClassPathResource("redis/token-bucket.lua"), List.class);
 
     private final StringRedisTemplate redis;
+    private final RedisBreaker breaker;
 
-    public RedisRateLimiter(StringRedisTemplate redis) {
+    public RedisRateLimiter(StringRedisTemplate redis, RedisBreaker breaker) {
         this.redis = redis;
+        this.breaker = breaker;
     }
 
     static String redisKey(String gateway) {
@@ -30,8 +33,8 @@ public class RedisRateLimiter {
     }
 
     public Decision tryAcquire(String gateway, RateLimitProperties.Limit limit) {
-        List<?> answer = redis.execute(TOKEN_BUCKET, List.of(redisKey(gateway)),
-                String.valueOf(limit.capacity()), String.valueOf(limit.refillPerMs()));
+        List<?> answer = breaker.call(() -> redis.execute(TOKEN_BUCKET, List.of(redisKey(gateway)),
+                String.valueOf(limit.capacity()), String.valueOf(limit.refillPerMs())));
         boolean allowed = ((Number) answer.get(0)).longValue() == 1;
         return new Decision(allowed, ((Number) answer.get(1)).longValue());
     }

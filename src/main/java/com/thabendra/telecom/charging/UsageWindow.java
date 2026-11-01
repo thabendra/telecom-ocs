@@ -1,6 +1,7 @@
 package com.thabendra.telecom.charging;
 
 import com.thabendra.telecom.monitoring.OcsMetrics;
+import com.thabendra.telecom.resilience.RedisBreaker;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.core.io.ClassPathResource;
@@ -29,11 +30,14 @@ public class UsageWindow {
     private final StringRedisTemplate redis;
     private final ChargingProperties.Grant grant;
     private final OcsMetrics metrics;
+    private final RedisBreaker breaker;
 
-    public UsageWindow(StringRedisTemplate redis, ChargingProperties properties, OcsMetrics metrics) {
+    public UsageWindow(StringRedisTemplate redis, ChargingProperties properties, OcsMetrics metrics,
+                       RedisBreaker breaker) {
         this.redis = redis;
         this.grant = properties.grant();
         this.metrics = metrics;
+        this.breaker = breaker;
     }
 
     static String key(String msisdn) {
@@ -65,8 +69,8 @@ public class UsageWindow {
 
     private long run(String msisdn, long usedMb) {
         try {
-            Long total = redis.execute(WINDOW, List.of(key(msisdn)), String.valueOf(usedMb),
-                    String.valueOf(grant.heavyWindow().toMillis()), UUID.randomUUID().toString());
+            Long total = breaker.call(() -> redis.execute(WINDOW, List.of(key(msisdn)), String.valueOf(usedMb),
+                    String.valueOf(grant.heavyWindow().toMillis()), UUID.randomUUID().toString()));
             return total == null ? 0 : total;
         } catch (DataAccessException redisDown) {
             log.debug("usage window not available for {}: {}", masked(msisdn), redisDown.getMessage());

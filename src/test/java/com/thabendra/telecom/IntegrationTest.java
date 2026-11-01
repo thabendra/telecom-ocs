@@ -23,7 +23,10 @@ import java.lang.annotation.Target;
 // the shared test Redis is a plain container (RedisSecurityTest checks TLS + ACL on its own one)
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
         properties = {"telecom.public-port=0", "management.server.port=0", "spring.data.redis.ssl.enabled=false",
-                "telecom.charging.expire-sessions=false"})   // tests run the expiry themselves
+                "telecom.charging.expire-sessions=false",   // tests run the expiry themselves
+                // Docker on a laptop can be slow for a moment: only failures may open the Redis breaker here
+                "telecom.circuit.redis.slow-call=30s",
+                "telecom.circuit.signing-keys.refresh=false"})
 @AutoConfigureMockMvc
 // metrics export (Prometheus) is off in tests unless asked for; tracing stays off
 @AutoConfigureObservability(tracing = false)

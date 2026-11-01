@@ -1,6 +1,7 @@
 package com.thabendra.telecom.customer;
 
 import com.thabendra.telecom.monitoring.OcsMetrics;
+import com.thabendra.telecom.resilience.RedisBreaker;
 import com.thabendra.telecom.subscriber.SubscriberRepository;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -39,10 +40,13 @@ public class OtpService {
     private final CustomerTokens tokens;
     private final CustomerProperties.Otp otp;
     private final OcsMetrics metrics;
+    private final RedisBreaker breaker;
     private final SecureRandom random = new SecureRandom();
 
     public OtpService(StringRedisTemplate redis, SubscriberRepository subscribers, SmsSender sms,
-                      CustomerTokens tokens, CustomerProperties customers, OcsMetrics metrics) {
+                      CustomerTokens tokens, CustomerProperties customers, OcsMetrics metrics,
+                      RedisBreaker breaker) {
+        this.breaker = breaker;
         this.redis = redis;
         this.subscribers = subscribers;
         this.sms = sms;
@@ -61,9 +65,9 @@ public class OtpService {
 
     public void requestCode(String msisdn) {
         // the cooldown comes first and counts for unknown numbers too, so it gives nothing away
-        Boolean first = redis.opsForValue().setIfAbsent(cooldownKey(msisdn), "1", otp.cooldown());
+        Boolean first = breaker.call(() -> redis.opsForValue().setIfAbsent(cooldownKey(msisdn), "1", otp.cooldown()));
         if (!Boolean.TRUE.equals(first)) {
-            Long wait = redis.getExpire(cooldownKey(msisdn), TimeUnit.SECONDS);
+            Long wait = breaker.call(() -> redis.getExpire(cooldownKey(msisdn), TimeUnit.SECONDS));
             throw new OtpCooldownException(wait == null ? otp.cooldown().toSeconds() : Math.max(1, wait));
         }
         if (!subscribers.existsByMsisdn(msisdn)) {
@@ -71,16 +75,20 @@ public class OtpService {
         }
         String code = "%06d".formatted(random.nextInt(1_000_000));
         // a new code replaces the old one and starts with 0 wrong attempts
-        redis.opsForHash().putAll(codeKey(msisdn), Map.of("hash", hash(msisdn, code), "attempts", "0"));
-        redis.expire(codeKey(msisdn), otp.ttl());
+        String codeHash = hash(msisdn, code);
+        breaker.run(() -> {
+            redis.opsForHash().putAll(codeKey(msisdn), Map.of("hash", codeHash, "attempts", "0"));
+            redis.expire(codeKey(msisdn), otp.ttl());
+        });
         sms.send(msisdn, "Your telecom-ocs login code is " + code + ". It works for "
                 + otp.ttl().toMinutes() + " minutes. Never share it with anyone.");
         metrics.otpSent();
     }
 
     public CustomerTokens.IssuedToken verify(String msisdn, String code) {
-        String result = redis.execute(VERIFY, List.of(codeKey(msisdn)),
-                hash(msisdn, code), String.valueOf(otp.maxAttempts()));
+        String codeHash = hash(msisdn, code);
+        String result = breaker.call(() -> redis.execute(VERIFY, List.of(codeKey(msisdn)),
+                codeHash, String.valueOf(otp.maxAttempts())));
         metrics.otpChecked(result == null ? "missing" : result.toLowerCase());
         if (!"OK".equals(result)) {
             throw new InvalidOtpException();   // WRONG, LOCKED or MISSING: the same answer to the caller

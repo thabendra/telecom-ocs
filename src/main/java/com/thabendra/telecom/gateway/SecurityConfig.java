@@ -1,5 +1,6 @@
 package com.thabendra.telecom.gateway;
 
+import com.thabendra.telecom.resilience.SigningKeysFactory;
 import org.springframework.boot.ssl.SslBundles;
 import org.springframework.boot.web.client.RestTemplateBuilder;
 import org.springframework.context.annotation.Bean;
@@ -55,13 +56,14 @@ public class SecurityConfig {
 
     /**
      * Checks a gateway's access token with the token server's public keys (/oauth2/jwks, read over HTTPS
-     * trusting only the dev CA, and read again when a token has a key id it doesn't know yet).
+     * trusting only the dev CA). Fetched through a circuit breaker, and the last good keys stay in use
+     * while the token server is down (CB-2).
      */
     @Bean
-    JwtDecoder gatewayTokenDecoder(GatewayProperties gateways, RestTemplateBuilder rest, SslBundles bundles) {
-        NimbusJwtDecoder decoder = NimbusJwtDecoder.withJwkSetUri(gateways.token().jwkSetUri())
-                .restOperations(rest.sslBundle(bundles.getBundle("token-server-client")).build())
-                .build();
+    JwtDecoder gatewayTokenDecoder(GatewayProperties gateways, RestTemplateBuilder rest, SslBundles bundles,
+                                   SigningKeysFactory signingKeys) {
+        NimbusJwtDecoder decoder = signingKeys.decoder("token-server", gateways.token().jwkSetUri(),
+                rest.sslBundle(bundles.getBundle("token-server-client")));
         decoder.setJwtValidator(GatewayTokens.validator(gateways.token()));
         return decoder;
     }

@@ -6,6 +6,7 @@ import com.thabendra.telecom.IntegrationTest;
 import com.thabendra.telecom.TestCerts;
 import com.thabendra.telecom.TestData;
 import com.thabendra.telecom.TestUsers;
+import com.thabendra.telecom.resilience.RedisBreaker;
 import com.thabendra.telecom.soap.WebServiceConfig;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -58,6 +59,9 @@ class IdempotencyTest {
 
     @Autowired
     private MockMvc mvc;
+
+    @Autowired
+    private RedisBreaker redisBreaker;
 
     @Autowired
     private JdbcTemplate jdbc;
@@ -275,6 +279,7 @@ class IdempotencyTest {
                     .andExpect(jsonPath("$.detail").value(containsString("already processed")));
         } finally {
             docker.unpauseContainerCmd(redisContainer.getContainerId()).exec();
+            redisBreaker.reset();   // shared by all test classes
         }
 
         assertThat(subscriberColumn("plan_data_used_mb")).isEqualTo(60);

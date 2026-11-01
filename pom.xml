@@ -72,6 +72,12 @@
             <artifactId>spring-boot-starter-oauth2-resource-server</artifactId>
         </dependency>
 
+        <!-- group 11: circuit breakers towards Redis and the servers holding the signing keys -->
+        <dependency>
+            <groupId>io.github.resilience4j</groupId>
+            <artifactId>resilience4j-circuitbreaker</artifactId>
+            <version>2.2.0</version>
+        </dependency>
         <!-- OB-2: health and metrics on the internal management port, in the Prometheus format -->
         <dependency>
             <groupId>org.springframework.boot</groupId>

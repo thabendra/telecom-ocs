@@ -87,7 +87,7 @@ class MetricsTest {
         ResponseEntity<String> health = TestCerts.exchange(TestCerts.http(managementPort).get().uri("/actuator/health"));
 
         assertThat(health.getStatusCode().value()).isEqualTo(200);
-        assertThat(health.getBody()).contains("\"status\":\"UP\"", "\"db\"", "\"redis\"");
+        assertThat(health.getBody()).contains("\"status\":\"UP\"", "\"db\"", "\"redis\"", "\"circuit\"");
     }
 
     @Test

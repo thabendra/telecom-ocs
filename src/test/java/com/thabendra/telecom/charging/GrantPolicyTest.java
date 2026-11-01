@@ -1,5 +1,6 @@
 package com.thabendra.telecom.charging;
 
+import com.thabendra.telecom.TestBreakers;
 import com.thabendra.telecom.monitoring.OcsMetrics;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
@@ -28,7 +29,8 @@ class GrantPolicyTest {
     @BeforeEach
     void setUp() {
         redis = mock(StringRedisTemplate.class);
-        UsageWindow window = new UsageWindow(redis, PROPERTIES, new OcsMetrics(new SimpleMeterRegistry()));
+        UsageWindow window = new UsageWindow(redis, PROPERTIES, new OcsMetrics(new SimpleMeterRegistry()),
+                TestBreakers.redis());
         policy = new GrantPolicy(window, PROPERTIES);
     }
 
