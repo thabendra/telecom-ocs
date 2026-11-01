@@ -24,16 +24,37 @@ services:
   #   default      off: nobody gets in without a user name and password
   #   telecom-ocs  the backend: only its keys (idem:*, ratelimit:*, otp:*), no dangerous commands
   #                (FLUSHALL, KEYS, CONFIG, DEBUG, ...); INFO allowed back for the health check
+  #   telecom-cache the backend on redis-cache: only cache:*, nothing else
   #   ops          an operator, for redis-cli; not used by any application
   # TEST-ONLY passwords; in production they come from a secret store (as #<sha256>, not >plain text).
+  # RD-10: noeviction, because these keys are data: when memory is full a write fails, and the alerts
+  # fire long before that. A key must never vanish to make room.
   redis:
     image: redis:7.4-alpine
     command: >
       redis-server --port 0 --tls-port 6379
       --tls-cert-file /tls/redis.pem --tls-key-file /tls/redis-key.pem --tls-ca-cert-file /tls/ca.pem
       --tls-auth-clients no --aclfile /etc/redis/users.acl
+      --maxmemory 256mb --maxmemory-policy noeviction
     ports:
       - "127.0.0.1:6379:6379"
+    volumes:
+      - ./certs/redis.pem:/tls/redis.pem:ro
+      - ./certs/redis-key.pem:/tls/redis-key.pem:ro
+      - ./certs/ca.pem:/tls/ca.pem:ro
+      - ./docker/redis/users.acl:/etc/redis/users.acl:ro
+
+  # RD-10: the cache's own Redis. When it is full it evicts the least recently used key, which is fine:
+  # a missing cache key only costs one read of Oracle. Nothing is saved to disk (it holds profiles).
+  redis-cache:
+    image: redis:7.4-alpine
+    command: >
+      redis-server --port 0 --tls-port 6379
+      --tls-cert-file /tls/redis.pem --tls-key-file /tls/redis-key.pem --tls-ca-cert-file /tls/ca.pem
+      --tls-auth-clients no --aclfile /etc/redis/users.acl
+      --maxmemory 128mb --maxmemory-policy allkeys-lru --save "" --appendonly no
+    ports:
+      - "127.0.0.1:6380:6379"
     volumes:
       - ./certs/redis.pem:/tls/redis.pem:ro
       - ./certs/redis-key.pem:/tls/redis-key.pem:ro

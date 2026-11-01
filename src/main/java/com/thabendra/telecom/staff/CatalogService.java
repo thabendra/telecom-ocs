@@ -1,5 +1,7 @@
 package com.thabendra.telecom.staff;
 
+import com.thabendra.telecom.cache.CacheKeys;
+import com.thabendra.telecom.cache.ReadCache;
 import com.thabendra.telecom.subscriber.BusinessRuleException;
 import com.thabendra.telecom.subscriber.NotFoundException;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -20,7 +22,8 @@ import java.util.List;
  * data_package_price by a trigger (V9), so the price history can't be skipped.
  * <p>
  * A new speed is used from the next charging grant on (the CHARGING package reads it per grant);
- * gateways are not pushed a new speed for users who are online now.
+ * gateways are not pushed a new speed for users who are online now. Customers see a change at once: it
+ * deletes the cached catalog after the commit (CA-2).
  */
 @Service
 public class CatalogService {
@@ -47,9 +50,11 @@ public class CatalogService {
               FROM data_package""";
 
     private final JdbcTemplate jdbc;
+    private final ReadCache cache;
 
-    public CatalogService(JdbcTemplate jdbc) {
+    public CatalogService(JdbcTemplate jdbc, ReadCache cache) {
         this.jdbc = jdbc;
+        this.cache = cache;
     }
 
     @Transactional(readOnly = true)
@@ -80,6 +85,7 @@ public class CatalogService {
             throw new BusinessRuleException("Package " + p.code() + " breaks a catalog rule: "
                     + "fair usage MB and throttled speed go together, sizes and prices can't be negative");
         }
+        cache.evictAfterCommit(CacheKeys.PACKAGES);
         return find(p.code());
     }
 
@@ -136,12 +142,14 @@ public class CatalogService {
         if (rows == 0) {
             throw new NotFoundException("Plan " + planCode + " not found");
         }
+        cache.evictAfterCommit(CacheKeys.PLANS);   // profiles read their plan from this list
     }
 
     private void update(String code, String sql, Object... args) {
         if (jdbc.update(sql, args) == 0) {
             throw new NotFoundException("Package " + code + " not found");
         }
+        cache.evictAfterCommit(CacheKeys.PACKAGES);
     }
 
     private static CatalogPackage toPackage(ResultSet rs) throws SQLException {

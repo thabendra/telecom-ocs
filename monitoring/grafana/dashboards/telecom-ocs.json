@@ -67,6 +67,23 @@
         { "refId": "A", "legendFormat": "{{name}} open", "expr": "sum by (name) (ocs_circuit_state{state=\"open\"})" },
         { "refId": "B", "legendFormat": "{{name}} refused", "expr": "sum by (name) (rate(ocs_circuit_rejected_total[1m]))" }
       ]
+    },
+    {
+      "id": 9, "type": "timeseries", "title": "Cache: reads per second by answer",
+      "gridPos": { "x": 0, "y": 40, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "refId": "A", "legendFormat": "{{name}} {{result}}", "expr": "sum by (name, result) (rate(ocs_cache_reads_total[1m]))" }
+      ]
+    },
+    {
+      "id": 10, "type": "timeseries", "title": "Redis: memory used, of its limit, and evicted keys",
+      "gridPos": { "x": 12, "y": 40, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "refId": "A", "legendFormat": "{{server}} used", "expr": "max by (server) (ocs_redis_memory_used_bytes) / max by (server) (ocs_redis_memory_max_bytes > 0)" },
+        { "refId": "B", "legendFormat": "{{server}} evicted", "expr": "max by (server) (ocs_redis_evicted_keys)" }
+      ]
     }
   ]
 }

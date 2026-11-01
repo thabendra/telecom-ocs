@@ -1,5 +1,9 @@
 package com.thabendra.telecom.rest;
 
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.thabendra.telecom.cache.CacheKeys;
+import com.thabendra.telecom.cache.ReadCache;
+
 import com.thabendra.telecom.push.GatewayCommand.Reason;
 import com.thabendra.telecom.subscriber.Plan;
 import com.thabendra.telecom.subscriber.Subscriber;
@@ -35,10 +39,15 @@ import java.util.List;
 @RequestMapping("/api")
 public class SubscriberController {
 
-    private final SubscriberService service;
+    private static final TypeReference<List<PlanDto>> PLAN_LIST = new TypeReference<>() {
+    };
 
-    public SubscriberController(SubscriberService service) {
+    private final SubscriberService service;
+    private final ReadCache cache;
+
+    public SubscriberController(SubscriberService service, ReadCache cache) {
         this.service = service;
+        this.cache = cache;
     }
 
     public record PlanDto(String code, String name, BigDecimal monthlyFee, int dataGb, int voiceMinutes,
@@ -54,6 +63,18 @@ public class SubscriberController {
         static SubscriberDto from(Subscriber s) {
             return new SubscriberDto(s.getMsisdn(), s.getFullName(), s.getNic(), s.getBalance(),
                     s.getStatus().name(), PlanDto.from(s.getPlan()));
+        }
+    }
+
+    /**
+     * CA-1: the part of a profile that rarely changes. No balance: every charge changes it, so it is always
+     * read from Oracle. Only the plan's code: the plan comes from the cached plan list, so changing a plan's
+     * speed reaches every profile by deleting one key.
+     */
+    public record CachedProfile(String msisdn, String fullName, String nic, String status, String planCode) {
+        static CachedProfile from(Subscriber s) {
+            return new CachedProfile(s.getMsisdn(), s.getFullName(), s.getNic(), s.getStatus().name(),
+                    s.getPlan().getCode());
         }
     }
 
@@ -74,7 +95,8 @@ public class SubscriberController {
 
     @GetMapping("/plans")
     public List<PlanDto> listPlans() {
-        return service.listPlans().stream().map(PlanDto::from).toList();
+        return cache.get("plans", CacheKeys.PLANS, PLAN_LIST,
+                () -> service.listPlans().stream().map(PlanDto::from).toList());
     }
 
     @PostMapping("/subscribers")
@@ -86,7 +108,14 @@ public class SubscriberController {
 
     @GetMapping("/subscribers/{msisdn}")
     public SubscriberDto get(@PathVariable String msisdn) {
-        return SubscriberDto.from(service.getSubscriber(msisdn));
+        CachedProfile profile = cache.get("profile", CacheKeys.profile(msisdn), CachedProfile.class,
+                () -> CachedProfile.from(service.getSubscriber(msisdn)));
+        return listPlans().stream()
+                .filter(plan -> plan.code().equals(profile.planCode()))
+                .findFirst()
+                .map(plan -> new SubscriberDto(profile.msisdn(), profile.fullName(), profile.nic(),
+                        service.balance(msisdn), profile.status(), plan))
+                .orElseGet(() -> SubscriberDto.from(service.getSubscriber(msisdn)));   // a plan newer than the list
     }
 
     @PostMapping("/subscribers/{msisdn}/top-ups")

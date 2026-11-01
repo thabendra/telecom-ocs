@@ -1,6 +1,7 @@
 # RD-7: Redis high availability to try locally. One primary, two replicas, three Sentinels, all with
 # TLS and the ACL users of docker/redis/users.acl (RD-9), and the backend in a container using them
-# through the "redis-sentinel" profile. (The everyday docker-compose.yml keeps one Redis.)
+# through the "redis-sentinel" profile. (The everyday docker-compose.yml has no replicas.) The cache's
+# Redis has none here either: losing it only costs reads of Oracle.
 #
 #   scripts/generate-dev-certs.sh && mvn -DskipTests package
 #   docker compose -f docker-compose.ha.yml up -d --build
@@ -57,6 +58,7 @@ services:
       sh -c "exec redis-server --port 0 --tls-port 6379
       --tls-cert-file /tls/redis.pem --tls-key-file /tls/redis-key.pem --tls-ca-cert-file /tls/ca.pem
       --tls-auth-clients no --tls-replication yes --aclfile /etc/redis/users.acl
+      --maxmemory 256mb --maxmemory-policy noeviction
       --masteruser replica --masterauth dev-only-replica-password
       --replica-announce-ip redis"
 
@@ -67,6 +69,7 @@ services:
       sh -c "exec redis-server --port 0 --tls-port 6379
       --tls-cert-file /tls/redis.pem --tls-key-file /tls/redis-key.pem --tls-ca-cert-file /tls/ca.pem
       --tls-auth-clients no --tls-replication yes --aclfile /etc/redis/users.acl
+      --maxmemory 256mb --maxmemory-policy noeviction
       --masteruser replica --masterauth dev-only-replica-password
       --replicaof redis 6379 --replica-announce-ip redis-replica-1"
 
@@ -76,8 +79,19 @@ services:
       sh -c "exec redis-server --port 0 --tls-port 6379
       --tls-cert-file /tls/redis.pem --tls-key-file /tls/redis-key.pem --tls-ca-cert-file /tls/ca.pem
       --tls-auth-clients no --tls-replication yes --aclfile /etc/redis/users.acl
+      --maxmemory 256mb --maxmemory-policy noeviction
       --masteruser replica --masterauth dev-only-replica-password
       --replicaof redis 6379 --replica-announce-ip redis-replica-2"
+
+  # RD-10: the cache's own Redis. When it is full it evicts the least recently used key, which is fine:
+  # a missing cache key only costs one read of Oracle. Nothing is saved to disk (it holds profiles).
+  redis-cache:
+    <<: *redis-tls
+    command: >
+      redis-server --port 0 --tls-port 6379
+      --tls-cert-file /tls/redis.pem --tls-key-file /tls/redis-key.pem --tls-ca-cert-file /tls/ca.pem
+      --tls-auth-clients no --aclfile /etc/redis/users.acl
+      --maxmemory 128mb --maxmemory-policy allkeys-lru --save "" --appendonly no
 
   redis-sentinel-1:
     <<: *sentinel
@@ -109,6 +123,8 @@ services:
         condition: service_started
     environment:
       SPRING_PROFILES_ACTIVE: redis-sentinel
+      CACHE_REDIS_HOST: redis-cache
+      CACHE_REDIS_PORT: "6379"
       DB_URL: jdbc:oracle:thin:@oracle:1521/FREEPDB1
       TRACING_ENABLED: "false"
     volumes:

@@ -21,6 +21,7 @@ check "public API is not for gateways"          closed 172.30.2.10 8080
 check "management port is not for gateways"     closed 172.30.2.10 8081
 check "Oracle is never reachable from outside"  closed 172.30.2.20 1521
 check "Redis is never reachable from outside"   closed 172.30.2.21 6379
+check "the cache Redis neither"                 closed 172.30.2.22 6379
 
 echo "the simulator's test subscriber (once; the backend has created the tables by now):"
 "${COMPOSE[@]}" exec -T oracle sqlplus -s telecom/telecom@FREEPDB1 <<'SQL' || FAILED=1

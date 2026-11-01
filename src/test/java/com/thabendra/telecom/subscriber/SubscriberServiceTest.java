@@ -1,5 +1,6 @@
 package com.thabendra.telecom.subscriber;
 
+import com.thabendra.telecom.cache.ReadCache;
 import com.thabendra.telecom.push.GatewayCommand.Reason;
 import com.thabendra.telecom.push.GatewayCommands;
 import com.thabendra.telecom.push.PushProperties;
@@ -40,7 +41,7 @@ class SubscriberServiceTest {
         jdbc = mock(JdbcTemplate.class);
         commands = mock(GatewayCommands.class);
         PushProperties push = new PushProperties(Duration.ofSeconds(10), Duration.ofSeconds(60), 4, 50, 1024);
-        service = new SubscriberService(subscribers, plans, jdbc, commands, push);
+        service = new SubscriberService(subscribers, plans, jdbc, commands, push, mock(ReadCache.class));
     }
 
     // group 5: the push channel triggers

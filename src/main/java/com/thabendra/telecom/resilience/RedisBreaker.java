@@ -2,6 +2,7 @@ package com.thabendra.telecom.resilience;
 
 import io.github.resilience4j.circuitbreaker.CircuitBreaker;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerConfig;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DataAccessException;
 import org.springframework.dao.QueryTimeoutException;
 import org.springframework.data.redis.RedisConnectionFailureException;
@@ -11,7 +12,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
 
 /**
- * CB-1: the one breaker in front of every Redis call of this backend copy. Without it a slow Redis costs
+ * CB-1: the breaker in front of every call to the data Redis from this backend copy. Without it a slow Redis costs
  * each request up to the 500 ms timeout per call, several times per request, which is far more than a
  * gateway's 200 ms limit. With it, the calls stop as soon as Redis is clearly in trouble, and each caller
  * goes straight to its fallback.
@@ -25,13 +26,21 @@ public class RedisBreaker {
 
     public static final String NAME = "redis";
 
+    private final String name;
     private final CircuitBreaker breaker;
     private final Circuits circuits;
 
+    @Autowired
     public RedisBreaker(Circuits circuits, CircuitProperties properties) {
+        this(NAME, circuits, properties);
+    }
+
+    /** One breaker per Redis server: the cache's own (RD-10) is built with its own name. */
+    public RedisBreaker(String name, Circuits circuits, CircuitProperties properties) {
+        this.name = name;
         this.circuits = circuits;
         CircuitProperties.Redis redis = properties.redis();
-        this.breaker = circuits.create(NAME, CircuitBreakerConfig.custom()
+        this.breaker = circuits.create(name, CircuitBreakerConfig.custom()
                 .slidingWindowType(CircuitBreakerConfig.SlidingWindowType.COUNT_BASED)
                 .slidingWindowSize(redis.windowCalls())
                 .minimumNumberOfCalls(redis.minimumCalls())
@@ -46,7 +55,7 @@ public class RedisBreaker {
     /** Runs one Redis call. Throws {@link RedisCircuitOpenException} (a DataAccessException) when open. */
     public <T> T call(Supplier<T> redisCall) {
         if (!breaker.tryAcquirePermission()) {
-            circuits.rejected(NAME);
+            circuits.rejected(name);
             throw new RedisCircuitOpenException();
         }
         long began = System.nanoTime();

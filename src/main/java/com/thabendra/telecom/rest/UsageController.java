@@ -1,5 +1,9 @@
 package com.thabendra.telecom.rest;
 
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.thabendra.telecom.cache.CacheKeys;
+import com.thabendra.telecom.cache.ReadCache;
+
 import com.thabendra.telecom.usage.DataPackage;
 import com.thabendra.telecom.usage.UsageService;
 import jakarta.validation.Valid;
@@ -28,10 +32,15 @@ import java.util.List;
 @RequestMapping("/api")
 public class UsageController {
 
-    private final UsageService service;
+    private static final TypeReference<List<PackageDto>> PACKAGE_LIST = new TypeReference<>() {
+    };
 
-    public UsageController(UsageService service) {
+    private final UsageService service;
+    private final ReadCache cache;
+
+    public UsageController(UsageService service, ReadCache cache) {
         this.service = service;
+        this.cache = cache;
     }
 
     public record PackageDto(String code, String name, String app, BigDecimal price, Long dataMb, int validityDays,
@@ -50,7 +59,8 @@ public class UsageController {
 
     @GetMapping("/packages")
     public List<PackageDto> listPackages() {
-        return service.listPackages().stream().map(PackageDto::from).toList();
+        return cache.get("packages", CacheKeys.PACKAGES, PACKAGE_LIST,
+                () -> service.listPackages().stream().map(PackageDto::from).toList());
     }
 
     @PostMapping("/subscribers/{msisdn}/packages")

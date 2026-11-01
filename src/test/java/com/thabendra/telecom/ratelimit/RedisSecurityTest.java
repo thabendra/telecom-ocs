@@ -101,6 +101,17 @@ class RedisSecurityTest {
     }
 
     @Test
+    void theCacheUserReachesOnlyCacheKeys() {   // RD-10: it holds profiles, not login codes
+        StringRedisTemplate cache = connect("telecom-cache", "dev-only-cache-password", true);
+
+        cache.opsForValue().set("cache:v1:plans", "[]", Duration.ofSeconds(30));
+        assertThat(cache.opsForValue().get("cache:v1:plans")).isEqualTo("[]");
+
+        assertThatThrownBy(() -> cache.opsForValue().get("otp:94771234567"))
+                .isInstanceOf(DataAccessException.class).rootCause().hasMessageContaining("NOPERM");
+    }
+
+    @Test
     void withoutAUserNobodyGetsIn() {   // the default user is off
         StringRedisTemplate anonymous = connect(null, null, true);
 

@@ -41,6 +41,29 @@ groups:
         annotations:
           summary: "New sessions refused with 503: this backend copy is overloaded"
 
+      # RD-10: the data Redis uses noeviction, so when it is full writes fail: act long before that
+      - alert: RedisDataMemoryHigh
+        expr: max(ocs_redis_memory_used_bytes{server="data"}) / max(ocs_redis_memory_max_bytes{server="data"} > 0) > 0.8
+        for: 5m
+        labels: { severity: critical }
+        annotations:
+          summary: "The data Redis is over 80 % of its memory; at 100 % its writes fail"
+
+      # RD-10: must never happen: it means the data Redis is not on noeviction
+      - alert: RedisDataKeysEvicted
+        expr: max(ocs_redis_evicted_keys{server="data"}) > 0
+        labels: { severity: critical }
+        annotations:
+          summary: "The data Redis has evicted keys: idempotency keys or login codes may be gone"
+
+      # RD-10: evicting is the cache's job, but this much means it is too small to help
+      - alert: RedisCacheEvictingALot
+        expr: max(rate(ocs_redis_evicted_keys{server="cache"}[5m])) > 10
+        for: 15m
+        labels: { severity: warning }
+        annotations:
+          summary: "The cache Redis keeps evicting: give it more memory"
+
       # CB-3: a backend copy has stopped calling Redis or a key server. It works on its fallback, so
       # nothing is down for users yet, but the thing it calls needs a look
       - alert: CircuitBreakerOpen

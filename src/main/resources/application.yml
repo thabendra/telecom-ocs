@@ -127,6 +127,22 @@ telecom:
     max-in-flight: ${DB_POOL_SIZE:10}
     in-flight-wait: 50ms
     reserved-slots: 3              # RL-5: of max-in-flight, only update and release may use these
+  # group 12: the cache of what customers read often, in its own Redis (RD-10, CA-1..5)
+  cache:
+    redis:
+      host: ${CACHE_REDIS_HOST:localhost}
+      port: ${CACHE_REDIS_PORT:6380}
+      username: ${CACHE_REDIS_USERNAME:telecom-cache}
+      password: ${CACHE_REDIS_PASSWORD:dev-only-cache-password}
+      tls: ${CACHE_REDIS_TLS:true}
+      timeout: 200ms           # a slow cache is worth nothing: Oracle answers in about this time
+    ttl: 10m                   # CA-3
+    jitter-percent: 20         # CA-3: 8 to 12 minutes
+    lock-ttl: 3s               # CA-4: freed after this if the request reloading the key dies
+    wait-for-load: 200ms       # CA-4: then the others read Oracle themselves
+    delayed-delete: 1s         # CA-2: the second delete after a change
+    monitor: true              # RD-10: memory numbers for the alerts
+    check-memory-every: 30s
   # group 11: circuit breakers in this backend, towards what it calls
   circuit:
     redis:                     # CB-1: many calls per second, so a percentage of the latest calls

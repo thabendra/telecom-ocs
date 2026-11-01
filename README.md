@@ -557,6 +557,48 @@ panel, and the `CircuitBreakerOpen` alert fires after 2 minutes open. Every chan
 once. The health entry stays UP with a breaker open: the copy is working on its fallback, and restarting
 it would help nobody.
 
+## Caching and Redis eviction (group 12)
+
+Customers read the same things again and again: the plans, the packages, their own profile. These go
+through a **cache-aside** cache (`ReadCache`): read Redis; on a miss read Oracle and store the result.
+
+**What is cached, and what never is (CA-1).** `GET /api/plans`, `GET /api/packages`, and the stable part of
+`GET /api/subscribers/{msisdn}`: name, NIC, status and plan code. The **balance is always read from Oracle**,
+because every charge changes it, and so are quota and usage. A profile takes its plan from the cached plan
+list, so a new plan speed reaches every profile by deleting one key. Charging and SOAP never read this cache.
+
+**Two Redis servers (RD-10).** A full Redis has to do something, and the right thing depends on the key:
+
+| | Data Redis (`redis`) | Cache Redis (`redis-cache`) |
+|---|---|---|
+| **Holds** | Idempotency keys, rate limit buckets, login codes, session owners | `cache:*` |
+| **When full** | `noeviction`: writes fail, no key vanishes | `allkeys-lru`: the oldest key goes |
+| **A lost key means** | A retry could run twice, a login code stops working | One extra read of Oracle |
+| **User** | `telecom-ocs` | `telecom-cache`, only `cache:*` |
+| **Breaker** | `redis` | `redis-cache`, so a cache outage doesn't touch idempotency |
+| **Saved to disk, replicas** | As before | None: it can always be rebuilt |
+
+Alerts: `RedisDataMemoryHigh` (over 80 %, well before writes fail), `RedisDataKeysEvicted` (must never
+fire) and `RedisCacheEvictingALot` (the cache is too small). The backend reads the numbers with `INFO` every
+30 s (`RedisMemoryMonitor`), so a hanging Redis can't hold up `/actuator/prometheus`.
+
+**Staff changes reach customers at once (CA-2).** The backend writes Oracle and, **after the commit**, deletes
+the key; a rollback deletes nothing. It deletes rather than updates, because an update can store an old value.
+One second later it deletes once more: a read that loaded the old row just before the commit may store it just
+after the first delete.
+
+**No spike on Oracle (CA-3, CA-4).** Each value lives 10 minutes +/- 20 %, so keys stored together don't expire
+together. When a key is missing, one request reloads it under a short lock (`SET NX`, 3 s). The others check
+the cache for up to 200 ms, then read Oracle themselves without storing.
+
+**Redis down (CA-5).** Any Redis error, or the breaker open: straight to Oracle, behind the database bulkhead
+as always. If a delete can't reach Redis, the old value lives until its TTL, so **12 minutes is the longest a
+customer can see an old price**. Staff screens read Oracle, and charging uses the real price whatever a
+customer's screen shows.
+
+`ocs_cache_reads_total{name, result}` counts each answer (`hit`, `miss`, `waited`, `wait-gave-up`,
+`redis-down`). The certificate needs the name `redis-cache`: run `scripts/generate-dev-certs.sh` once more.
+
 ## Gateway simulator
 
 `gateway-simulator/` is a separate Spring Boot command line app that plays the network gateway: it
@@ -738,6 +780,9 @@ mvn test
   for the in-memory bucket, the fallback share and overrides, and the `503` bulkhead with its load
   shedding (RL-5). `FailOpenTest` in the simulator: the limits, the same request sent again, the usage
   charged afterwards (RL-6).
+- `CacheTest`: the cache against Oracle + Redis: the second read is a hit, a staff change shows at once, the
+  balance is live, a rollback deletes nothing, the delayed delete, one reload for many requests, Redis paused.
+  `RedisEvictionTest`: real Redis servers with the two policies, filled up: the cache evicts, data refuses.
 - `IdempotencyTest`: retries against Oracle + Redis: replay, 400 / 422 / 409, keys per client, TTL,
   two copies of a request at the same moment run once, and the Oracle request-number check when
   Redis has lost the key or is unreachable (the Redis container is paused).

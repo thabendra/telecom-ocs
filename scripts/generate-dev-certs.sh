@@ -7,7 +7,7 @@
 #   certs/backend.p12                      backend server certificate for localhost / 127.0.0.1, and for the
 #                                          container "backend" / 172.30.2.10 (docker-compose.vpn.yml)
 #   certs/token-server.p12                 token server (SE-2) certificate for localhost / 127.0.0.1 / token-server
-#   certs/redis.pem + redis-key.pem        Redis TLS (RD-9) certificate for localhost, redis and the HA replicas
+#   certs/redis.pem + redis-key.pem        Redis TLS (RD-9) certificate for localhost, redis, redis-cache and the HA replicas
 #                                          and Sentinels (RD-7), PEM for redis-server
 #   certs/pgw-colombo-01.p12 (.pem)        gateway client certificates
 #   certs/pgw-kandy-01.p12   (.pem)
@@ -53,7 +53,7 @@ keytool -importcert -noprompt -alias ca -file "$DIR/ca.pem" -keystore "$DIR/gate
 
 issue backend "CN=localhost, O=Telecom Dev" "SAN=dns:localhost,ip:127.0.0.1,dns:backend,ip:172.30.2.10" ca -validity 825 -ext EKU=serverAuth
 issue token-server "CN=localhost, O=Telecom Dev Token Server" "SAN=dns:localhost,ip:127.0.0.1,dns:token-server,ip:172.30.2.11" ca -validity 825 -ext EKU=serverAuth
-issue redis "CN=redis, O=Telecom Dev" "SAN=dns:localhost,ip:127.0.0.1,dns:redis,dns:redis-replica-1,dns:redis-replica-2,dns:redis-sentinel-1,dns:redis-sentinel-2,dns:redis-sentinel-3" ca -validity 825 -ext EKU=serverAuth
+issue redis "CN=redis, O=Telecom Dev" "SAN=dns:localhost,ip:127.0.0.1,dns:redis,dns:redis-cache,dns:redis-replica-1,dns:redis-replica-2,dns:redis-sentinel-1,dns:redis-sentinel-2,dns:redis-sentinel-3" ca -validity 825 -ext EKU=serverAuth
 # redis-server reads PEM files: the certificate is redis.pem already, the key comes out of the PKCS12
 openssl pkcs12 -in "$DIR/redis.p12" -nocerts -nodes -passin "pass:$PASS" | openssl pkey -out "$DIR/redis-key.pem"
 issue pgw-colombo-01 "CN=pgw-colombo-01, O=Telecom Dev" EKU=clientAuth ca -validity 825

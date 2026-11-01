@@ -26,7 +26,9 @@ import java.lang.annotation.Target;
                 "telecom.charging.expire-sessions=false",   // tests run the expiry themselves
                 // Docker on a laptop can be slow for a moment: only failures may open the Redis breaker here
                 "telecom.circuit.redis.slow-call=30s",
-                "telecom.circuit.signing-keys.refresh=false"})
+                "telecom.circuit.signing-keys.refresh=false",
+                // the cache shares the test Redis (RedisEvictionTest and RedisSecurityTest check its own setup)
+                "telecom.cache.redis.host=", "telecom.cache.monitor=false"})
 @AutoConfigureMockMvc
 // metrics export (Prometheus) is off in tests unless asked for; tracing stays off
 @AutoConfigureObservability(tracing = false)

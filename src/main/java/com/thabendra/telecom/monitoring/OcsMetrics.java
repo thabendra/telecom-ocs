@@ -23,6 +23,8 @@ import java.util.function.Supplier;
  *   ocs_sessions_expired_total                                  sessions a gateway never released (CH-8)
  *   ocs_heavy_users_flagged_total                               subscribers who became heavy users (RL-3)
  *   ocs_circuit_state{name, state}, ocs_circuit_rejected_total  circuit breakers: redis, key servers (CB-3)
+ *   ocs_cache_reads_total{name, result}                         hit / miss / waited / wait-gave-up / redis-down (CA-1)
+ *   ocs_redis_memory_used_bytes, ocs_redis_memory_max_bytes, ocs_redis_evicted_keys{server}   data / cache (RD-10)
  * </pre>
  * Tags only take values from small fixed sets (the allowed gateways, a few results), never a phone
  * number or IP: every tag value is a separate time series in Prometheus.
@@ -65,6 +67,31 @@ public class OcsMetrics {
         Counter.builder("ocs.load.shed")
                 .description("Requests refused with 503 to keep database slots for update and release")
                 .register(registry).increment();
+    }
+
+    /** name plans / packages / profile; result hit / miss / waited / wait-gave-up / redis-down. */
+    public void cacheRead(String name, String result) {
+        Counter.builder("ocs.cache.reads")
+                .description("Reads through the cache, and how each was answered")
+                .tag("name", name)
+                .tag("result", result)
+                .register(registry).increment();
+    }
+
+    /** RD-10: server data / cache. */
+    public void redisMemory(String server, Supplier<Number> used, Supplier<Number> max, Supplier<Number> evicted) {
+        Gauge.builder("ocs.redis.memory.used.bytes", used)
+                .description("Memory this Redis is using")
+                .tag("server", server)
+                .register(registry);
+        Gauge.builder("ocs.redis.memory.max.bytes", max)
+                .description("This Redis' maxmemory")
+                .tag("server", server)
+                .register(registry);
+        Gauge.builder("ocs.redis.evicted.keys", evicted)
+                .description("Keys this Redis has evicted since it started")
+                .tag("server", server)
+                .register(registry);
     }
 
     public void bulkheadSlots(Supplier<Number> freeSlots) {

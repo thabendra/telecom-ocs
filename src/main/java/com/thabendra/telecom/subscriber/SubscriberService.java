@@ -1,5 +1,7 @@
 package com.thabendra.telecom.subscriber;
 
+import com.thabendra.telecom.cache.CacheKeys;
+import com.thabendra.telecom.cache.ReadCache;
 import com.thabendra.telecom.push.GatewayCommand.Reason;
 import com.thabendra.telecom.push.GatewayCommands;
 import com.thabendra.telecom.push.PushProperties;
@@ -20,14 +22,16 @@ public class SubscriberService {
     private final JdbcTemplate jdbc;
     private final GatewayCommands commands;
     private final PushProperties push;
+    private final ReadCache cache;
 
     public SubscriberService(SubscriberRepository subscribers, PlanRepository plans, JdbcTemplate jdbc,
-                             GatewayCommands commands, PushProperties push) {
+                             GatewayCommands commands, PushProperties push, ReadCache cache) {
         this.subscribers = subscribers;
         this.plans = plans;
         this.jdbc = jdbc;
         this.commands = commands;
         this.push = push;
+        this.cache = cache;
     }
 
     @Transactional(readOnly = true)
@@ -38,6 +42,15 @@ public class SubscriberService {
     @Transactional(readOnly = true)
     public Subscriber getSubscriber(String msisdn) {
         return subscribers.findByMsisdn(msisdn)
+                .orElseThrow(() -> new NotFoundException("Subscriber " + msisdn + " not found"));
+    }
+
+    /** Always from Oracle: every charge changes it, so it is never cached (CA-1). */
+    @Transactional(readOnly = true)
+    public BigDecimal balance(String msisdn) {
+        return jdbc.query("SELECT balance FROM subscriber WHERE msisdn = ?",
+                        (rs, i) -> rs.getBigDecimal(1), msisdn).stream()
+                .findFirst()
                 .orElseThrow(() -> new NotFoundException("Subscriber " + msisdn + " not found"));
     }
 
@@ -84,6 +97,7 @@ public class SubscriberService {
         subscriber.suspend();
         recordStatusChange(msisdn, by);
         commands.block(msisdn, reason);
+        cache.evictAfterCommit(CacheKeys.profile(msisdn));
         return subscriber;
     }
 
@@ -98,6 +112,7 @@ public class SubscriberService {
         subscriber.activate();
         recordStatusChange(msisdn, by);
         commands.unblock(msisdn, Reason.UNSUSPENDED, subscriber.getPlan().getMaxBandwidthKbps());
+        cache.evictAfterCommit(CacheKeys.profile(msisdn));
         return subscriber;
     }
 
@@ -112,6 +127,7 @@ public class SubscriberService {
         } catch (DataAccessException e) {
             throw OracleErrors.translate(e);
         }
+        cache.evictAfterCommit(CacheKeys.profile(msisdn));
         return getSubscriber(msisdn);
     }
 
