@@ -1,0 +1,104 @@
+# K8-1. The token server. Its signing keys live on a shared volume (SE-7), so every copy signs with the same key.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: signing-keys
+spec:
+  accessModes: ["ReadWriteMany"]     # several copies, on several nodes
+  resources:
+    requests:
+      storage: 10Mi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: token-server
+  labels:
+    app: token-server
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: token-server
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: token-server
+    spec:
+      terminationGracePeriodSeconds: 45
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: DoNotSchedule
+          labelSelector:
+            matchLabels:
+              app: token-server
+      containers:
+        - name: token-server
+          image: token-server
+          imagePullPolicy: IfNotPresent
+          ports:
+            - { name: https, containerPort: 9443 }
+          envFrom:
+            - configMapRef:
+                name: token-server-config
+            - secretRef:
+                name: token-server-secrets
+          resources:
+            requests:
+              cpu: "100m"
+              memory: 384Mi
+            limits:
+              memory: 384Mi
+          # this app has no management port. The key set needs no client certificate (client-auth: want), and it
+          # depends on nothing else, so it says "this copy can answer"
+          startupProbe:
+            httpGet: { path: /oauth2/jwks, port: https, scheme: HTTPS }
+            periodSeconds: 5
+            failureThreshold: 24
+          livenessProbe:
+            httpGet: { path: /oauth2/jwks, port: https, scheme: HTTPS }
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          readinessProbe:
+            httpGet: { path: /oauth2/jwks, port: https, scheme: HTTPS }
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 2
+          lifecycle:
+            preStop:
+              exec:
+                command: ["sleep", "10"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - { name: certs, mountPath: /certs, readOnly: true }
+            - { name: signing-keys, mountPath: /keys }
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - name: certs
+          secret:
+            secretName: token-server-certs
+            defaultMode: 0440
+        - name: signing-keys
+          persistentVolumeClaim:
+            claimName: signing-keys
+        - name: tmp
+          emptyDir: {}

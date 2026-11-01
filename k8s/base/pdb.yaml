@@ -1,0 +1,20 @@
+# K8-5: a node being drained for maintenance waits, rather than taking the last copy.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: backend
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: backend
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: token-server
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: token-server

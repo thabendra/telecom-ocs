@@ -1,0 +1,21 @@
+# K8-2. The customer and staff API, with HTTPS from the outside. Only /api: the gateway API isn't served on this door.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: public-api
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts: ["api.telecom.example"]
+      secretName: public-api-tls    # from cert-manager or the secret store
+  rules:
+    - host: api.telecom.example
+      http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: backend-public
+                port:
+                  name: public

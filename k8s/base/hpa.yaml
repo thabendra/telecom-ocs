@@ -1,0 +1,33 @@
+# K8-3. More copies don't make Oracle bigger, so the most copies comes from what Oracle can take:
+#
+#   DB_POOL_SIZE x maxReplicas <= Oracle's sessions, less what others need
+#   10           x 3            = 30  <= 60
+#
+# maxReplicas is also MAX_INSTANCES in configmap.yaml: with Redis down, each copy allows limit / MAX_INSTANCES, so
+# a lower number there would let all copies together go over the limit. scripts/k8s-check.sh fails if these
+# two differ, or if the sum doesn't fit in the annotation below. Find the real number with:
+#   SELECT value FROM v$parameter WHERE name = 'sessions'
+# The load tests (group 14) showed Oracle is the limit, not this app: past that point more copies only queue.
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: backend
+  annotations:
+    telecom.example/oracle-sessions-for-backend: "60"
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: backend
+  minReplicas: 2    # one node can go down
+  maxReplicas: 3
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300   # traffic comes in waves: don't remove what is needed again soon

@@ -1,6 +1,8 @@
 spring:
   application:
     name: telecom-ocs
+  lifecycle:
+    timeout-per-shutdown-phase: 20s   # k8s: under terminationGracePeriodSeconds, with the preStop sleep
   # local Oracle Database Free from docker-compose.yml (test credentials only)
   datasource:
     url: ${DB_URL:jdbc:oracle:thin:@localhost:1521/FREEPDB1}
@@ -66,6 +68,8 @@ spring:
 #   server.port         gateway API, mTLS: a client certificate from our CA is required
 #   telecom.public-port customer / staff API, plain HTTP; callers log in with a JWT (group 6)
 server:
+  # K8-1: on shutdown finish what is running; a rolling update then loses no request
+  shutdown: graceful
   port: ${GATEWAY_PORT:8443}
   ssl:
     bundle: gateway-port
@@ -86,6 +90,15 @@ management:
   endpoint:
     health:
       show-details: always   # Oracle and Redis status, for whoever can reach this internal port
+      # K8-1: /actuator/health/liveness and /readiness. Liveness never looks outside the JVM: a restart can't fix
+      # a database. Readiness has Oracle only: lost Oracle = no traffic, and Redis down has fallbacks
+      probes:
+        enabled: true
+      group:
+        liveness:
+          include: livenessState
+        readiness:
+          include: readinessState, db
   metrics:
     tags:
       application: telecom-ocs
@@ -212,7 +225,7 @@ telecom:
     anonymous: { capacity: 30, refill-per-second: 0.5 }    # per IP: login, catalog
     customer: { capacity: 60, refill-per-second: 1 }       # per logged-in number
     staff: { capacity: 200, refill-per-second: 10 }        # per staff login
-    # load balancers / proxies whose X-Forwarded-For is believed (exact addresses); empty = none
+    # load balancers / proxies whose X-Forwarded-For is believed (addresses or ranges); empty = none
     trusted-proxies: []
   idempotency:
     # write calls that must carry an Idempotency-Key header (ID-1)

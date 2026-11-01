@@ -833,6 +833,50 @@ reports. **These tests measure one computer** running k6, the backend and Oracle
 setup did, not what production will do. A failed `charging` run on a laptop may mean the laptop is the limit; `DB_POOL_SIZE`
 and `TARGET_RPS` show where the limit moves.
 
+## Kubernetes (group 15)
+
+`k8s/` holds the files for a cluster. **Nothing has been installed**; they are checked without a cluster:
+
+```bash
+scripts/k8s-check.sh    # kustomize + kubeconform in containers, and the K8-3 rule; needs only Docker
+```
+
+| | |
+|---|---|
+| `k8s/base` | Deployments, Services, Ingress, autoscaler, NetworkPolicies, ConfigMaps, PodDisruptionBudgets, placeholder Secrets |
+| `k8s/overlays/dev` | One copy of each on a local cluster, node ports |
+| `k8s/overlays/prod` | 3 to 6 copies, internal load balancers, secrets from a secret store |
+
+**The three doors (K8-2).**
+
+| Port | Goes through | Why |
+|---|---|---|
+| 8443, 9443 | A plain TCP `LoadBalancer` | **TLS passes through to the pod**: the certificate check (SE-1) and the token's binding (SE-4) need the gateway's own handshake. An Ingress would end TLS, and the backend would never see a certificate |
+| 8080 | An `Ingress` with HTTPS, only `/api` | Customers and staff log in with a token, so TLS can end at the edge |
+| 8081 | `ClusterIP`, monitoring only | It has no login |
+
+**Lost Oracle: no traffic, no restart (K8-1).** The liveness probe only asks if the JVM is stuck. Readiness also asks about
+Oracle, not Redis, which has fallbacks. If liveness looked at Oracle, a database outage would restart every copy, and
+add an outage of our own to it. On shutdown a pod keeps answering for 10 s while the load balancer catches up (`preStop`), then
+finishes what is running (`server.shutdown: graceful`, up to 20 s).
+
+**How many copies (K8-3).** More copies don't make Oracle bigger, so `DB_POOL_SIZE x maxReplicas` must fit in Oracle's
+sessions, and `MAX_INSTANCES` must equal `maxReplicas` (with Redis down each copy allows `limit / MAX_INSTANCES`).
+`k8s-check.sh` fails on either. Group 14 showed Oracle is the limit: past it, more copies only queue.
+
+**Who reaches what (K8-4).** Everything is refused unless allowed: only the VPN reaches 8443 and 9443, only the ingress
+reaches 8080, only monitoring reaches 8081, and pods may only call Oracle, Redis, Keycloak, Jaeger and the token server.
+This needs a network plugin that enforces it: without one the policies are silently ignored.
+
+**Worth knowing.**
+
+- The token server needs a `ReadWriteMany` volume for its signing keys, as its copies share them (SE-7).
+- `TELECOM_PUBLICRATELIMIT_TRUSTEDPROXIES_0` must be the ingress pods' range. Too narrow, and all customers share one
+  per-IP bucket. Too wide, and a caller can pick an address with `X-Forwarded-For`.
+- `gateways.crl` and new certificates reach a pod through its Secret, which takes up to about a minute, on top of the 30 s
+  read: a revocation works within about 2 minutes here.
+- Ranges, host names and registry names are examples. The load balancer annotations in `prod` are for AWS.
+
 ## Tests
 
 ```bash
@@ -871,6 +915,7 @@ mvn test
   mTLS; a broken or foreign list can't un-revoke. In the token server: `SigningKeyStoreTest` (the rotation steps with
   a moved clock), `CertificateReloadTest` (a new key store served with no restart), and in `TokenServerTest` the
   key named in the token, a revoked gateway and a disabled client.
+- `HealthProbesTest`: liveness looks only at the JVM, readiness also at Oracle (K8-1).
 - `CacheTest`: the cache against Oracle + Redis: the second read is a hit, a staff change shows at once, the
   balance is live, a rollback deletes nothing, the delayed delete, one reload for many requests, Redis paused.
   `RedisEvictionTest`: real Redis servers with the two policies, filled up: the cache evicts, data refuses.

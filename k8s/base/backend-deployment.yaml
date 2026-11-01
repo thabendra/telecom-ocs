@@ -1,0 +1,115 @@
+# K8-1. Three doors: 8443 gateways (mTLS), 8080 customers and staff, 8081 health and metrics.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+  labels:
+    app: backend
+spec:
+  # no replicas here: the autoscaler in hpa.yaml owns that number
+  selector:
+    matchLabels:
+      app: backend
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0     # a new copy is ready before an old one goes
+  template:
+    metadata:
+      labels:
+        app: backend
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8081"
+        prometheus.io/path: /actuator/prometheus
+    spec:
+      # must cover the preStop sleep (10 s) + finishing requests (20 s, spring.lifecycle) + a margin
+      terminationGracePeriodSeconds: 45
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      # copies spread over nodes and zones, so one node going down can't take them all
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: DoNotSchedule
+          labelSelector:
+            matchLabels:
+              app: backend
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: backend
+      containers:
+        - name: backend
+          image: telecom-ocs
+          imagePullPolicy: IfNotPresent
+          ports:
+            - { name: gateway, containerPort: 8443 }
+            - { name: public, containerPort: 8080 }
+            - { name: management, containerPort: 8081 }
+          envFrom:
+            - configMapRef:
+                name: backend-config
+            - secretRef:
+                name: backend-secrets
+          # memory limit = request: a pod is never killed because a neighbour needs memory. No CPU limit: it
+          # would throttle the JVM and hurt p99 (CH-9) while the node has CPU to spare
+          resources:
+            requests:
+              cpu: "500m"
+              memory: 1Gi
+            limits:
+              memory: 1Gi
+          # Flyway and a cold JVM take a while; the other probes wait for this one
+          startupProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: management
+            periodSeconds: 5
+            failureThreshold: 36
+          # only "is this JVM stuck": never Oracle or Redis. A restart can't fix a database, and restarting
+          # every copy at once would turn its outage into an outage of ours too
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: management
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          # lost Oracle: no traffic for this copy, and it isn't restarted. Redis isn't in it: there are fallbacks
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: management
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 2
+          lifecycle:
+            # the load balancer learns of the shutdown a moment after the pod does: keep answering until then
+            preStop:
+              exec:
+                command: ["sleep", "10"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - { name: certs, mountPath: /certs, readOnly: true }
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - name: certs
+          secret:
+            secretName: backend-certs
+            defaultMode: 0440
+        - name: tmp     # Tomcat's work files, as the rest of the disk is read only
+          emptyDir: {}

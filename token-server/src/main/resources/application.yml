@@ -1,6 +1,8 @@
 spring:
   application:
     name: token-server
+  lifecycle:
+    timeout-per-shutdown-phase: 20s   # k8s: under terminationGracePeriodSeconds, with the preStop sleep
   # TEST-ONLY certificate files from scripts/generate-dev-certs.sh (run from the project root)
   # SE-7: reload-on-update: a new token-server.p12 or trust store is served without a restart
   ssl:
@@ -23,6 +25,7 @@ spring:
             type: PKCS12
 
 server:
+  shutdown: graceful       # K8-1: a rolling update loses no token request
   port: ${TOKEN_SERVER_PORT:9443}
   ssl:
     bundle: token-server

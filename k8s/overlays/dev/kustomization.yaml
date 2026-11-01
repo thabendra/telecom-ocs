@@ -1,0 +1,16 @@
+# A small copy on a local cluster (kind, minikube): one of each, node ports instead of load balancers, a local
+# image. The secrets stay placeholders: put the dev values in by hand, never in this repository.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../base
+
+patches:
+  - path: small.yaml
+
+images:
+  - name: telecom-ocs
+    newTag: dev
+  - name: token-server
+    newTag: dev

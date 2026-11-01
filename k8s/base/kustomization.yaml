@@ -1,0 +1,24 @@
+# Write only: nothing here has been installed. Check it with scripts/k8s-check.sh (K8-6), which needs no cluster.
+# Oracle, the two Redis servers, Keycloak and Jaeger are not in here: they are reached over the network.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: telecom-ocs
+
+resources:
+  - namespace.yaml
+  - configmap.yaml
+  - secrets.yaml
+  - backend-deployment.yaml
+  - token-server-deployment.yaml
+  - services.yaml
+  - ingress.yaml
+  - hpa.yaml
+  - pdb.yaml
+  - networkpolicies.yaml
+
+images:
+  - name: telecom-ocs
+    newTag: "0.0.1"
+  - name: token-server
+    newTag: "0.0.1"

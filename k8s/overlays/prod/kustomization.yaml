@@ -1,0 +1,44 @@
+# Every name, range and number here is an example for a real operator to replace. Secrets come from a secret store,
+# through the External Secrets Operator.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../base
+  - external-secrets.yaml
+
+patches:
+  - path: scale.yaml
+  # the placeholders are replaced by what external-secrets.yaml makes
+  - patch: |-
+      $patch: delete
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: backend-secrets
+  - patch: |-
+      $patch: delete
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: backend-certs
+  - patch: |-
+      $patch: delete
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: token-server-secrets
+  - patch: |-
+      $patch: delete
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: token-server-certs
+
+images:
+  - name: telecom-ocs
+    newName: registry.telecom.example/telecom-ocs
+    newTag: "0.0.1"
+  - name: token-server
+    newName: registry.telecom.example/token-server
+    newTag: "0.0.1"

@@ -1,0 +1,67 @@
+# K8-2. 8443 and 9443 are plain TCP load balancers: TLS passes through and ends in the pod, as the certificate
+# check (SE-1) and the token's binding to the certificate (SE-4) need the gateway's own handshake. An HTTP load
+# balancer or an Ingress would end TLS itself, and the backend would never see a certificate.
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend-gateway
+spec:
+  type: LoadBalancer
+  # keeps the gateway's real address, which the NetworkPolicy and loadBalancerSourceRanges look at
+  externalTrafficPolicy: Local
+  loadBalancerSourceRanges:
+    - 10.99.0.0/24      # the VPN range, an example (VP-1)
+  selector:
+    app: backend
+  ports:
+    - { name: gateway, port: 8443, targetPort: gateway, protocol: TCP }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: token-server-gateway
+spec:
+  type: LoadBalancer
+  externalTrafficPolicy: Local
+  loadBalancerSourceRanges:
+    - 10.99.0.0/24
+  selector:
+    app: token-server
+  ports:
+    - { name: https, port: 9443, targetPort: https, protocol: TCP }
+---
+# inside the cluster: the backend reads the signing keys here
+apiVersion: v1
+kind: Service
+metadata:
+  name: token-server
+spec:
+  type: ClusterIP
+  selector:
+    app: token-server
+  ports:
+    - { name: https, port: 9443, targetPort: https }
+---
+# behind the Ingress in ingress.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend-public
+spec:
+  type: ClusterIP
+  selector:
+    app: backend
+  ports:
+    - { name: public, port: 8080, targetPort: public }
+---
+# internal only: no login, so only monitoring may reach it (networkpolicies.yaml)
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend-management
+spec:
+  type: ClusterIP
+  selector:
+    app: backend
+  ports:
+    - { name: management, port: 8081, targetPort: management }
