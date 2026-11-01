@@ -66,6 +66,17 @@ class GatewayTokenTest {
     }
 
     @Test
+    void aValidTokenWithNoCertificateIsRefused() throws Exception {   // SE-4; found by the coverage report (TE-5)
+        mvc.perform(post("/charging/v1/sessions").contentType(MediaType.APPLICATION_JSON)
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + TestTokens.token(COLOMBO))
+                        .header(IdempotencyFilter.KEY_HEADER, UUID.randomUUID().toString())
+                        .content("{\"msisdn\":\"%s\",\"app\":\"GENERAL\",\"requestedMb\":100}".formatted(MSISDN)))
+                .andExpect(status().isUnauthorized());
+
+        assertThat(sessions()).isZero();
+    }
+
+    @Test
     void validTokenIsAccepted() {
         assertThat(start(TestTokens.token(COLOMBO)).getStatusCode().value()).isEqualTo(201);
     }

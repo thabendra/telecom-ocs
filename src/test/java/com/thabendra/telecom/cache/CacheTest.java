@@ -244,6 +244,17 @@ class CacheTest {
     }
 
     @Test
+    void whenTheReloadTakesTooLongOthersReadOracleThemselvesAndStoreNothing() {
+        cacheRedis.template().opsForValue().set("cache:lock:" + TEST_KEY, "another request");
+        double gaveUp = reads("test", "wait-gave-up");
+
+        assertThat(cache.get("test", TEST_KEY, String.class, () -> "from oracle")).isEqualTo("from oracle");
+
+        assertThat(reads("test", "wait-gave-up")).isEqualTo(gaveUp + 1);
+        assertThat(cacheRedis.template().hasKey(TEST_KEY)).isFalse();
+    }
+
+    @Test
     void aFailedReloadFreesTheLockAndStoresNothing() {
         assertThatThrownBy(() -> cache.get("test", TEST_KEY, String.class, () -> {
             throw new NotFoundException("nobody");

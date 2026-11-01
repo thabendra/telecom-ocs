@@ -1,12 +1,23 @@
 package com.thabendra.telecom.ratelimit;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.thabendra.telecom.TestBreakers;
+import com.thabendra.telecom.cache.CacheProperties;
+import com.thabendra.telecom.cache.CacheRedis;
+import com.thabendra.telecom.cache.ReadCache;
+import com.thabendra.telecom.monitoring.OcsMetrics;
+import com.thabendra.telecom.resilience.Circuits;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import io.lettuce.core.ClientOptions;
 import io.lettuce.core.SslOptions;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.boot.ssl.SslBundle;
+import org.springframework.boot.ssl.SslBundles;
+import org.springframework.boot.ssl.SslStoreBundle;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.dao.DataAccessException;
+import org.springframework.data.redis.connection.RedisConnectionFactory;
 import org.springframework.data.redis.connection.RedisStandaloneConfiguration;
 import org.springframework.data.redis.connection.lettuce.LettuceClientConfiguration;
 import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
@@ -20,6 +31,10 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.MountableFile;
 
 import java.io.File;
+import java.io.InputStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.security.KeyStore;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
@@ -27,6 +42,8 @@ import java.util.Properties;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 /**
  * RD-9 against a Redis set up exactly like docker-compose.yml: TLS only, with the certificate from
@@ -109,6 +126,32 @@ class RedisSecurityTest {
 
         assertThatThrownBy(() -> cache.opsForValue().get("otp:94771234567"))
                 .isInstanceOf(DataAccessException.class).rootCause().hasMessageContaining("NOPERM");
+    }
+
+    @Test
+    void theCacheConnectsOverItsOwnTlsConnectionAndUser() throws Exception {   // RD-10; found by the report (TE-5)
+        KeyStore trusted = KeyStore.getInstance("PKCS12");
+        try (InputStream in = Files.newInputStream(Path.of("certs", "gateway-ca-truststore.p12"))) {
+            trusted.load(in, "changeit".toCharArray());
+        }
+        SslBundles bundles = mock(SslBundles.class);
+        when(bundles.getBundle("redis-client")).thenReturn(SslBundle.of(SslStoreBundle.of(null, null, trusted)));
+        CacheProperties properties = new CacheProperties(
+                new CacheProperties.Redis(REDIS.getHost(), REDIS.getMappedPort(6379), "telecom-cache",
+                        "dev-only-cache-password", true, Duration.ofSeconds(3)),
+                Duration.ofMinutes(10), 20, Duration.ofSeconds(3), Duration.ofMillis(200), Duration.ofSeconds(1), false,
+                Duration.ofSeconds(30));
+        OcsMetrics metrics = new OcsMetrics(new SimpleMeterRegistry());
+        CacheRedis connection = new CacheRedis(properties, mock(RedisConnectionFactory.class), bundles,
+                new Circuits(metrics), TestBreakers.properties());
+        try {
+            ReadCache cache = new ReadCache(connection, properties, new ObjectMapper(), metrics);
+
+            assertThat(cache.get("test", "cache:v1:tls", String.class, () -> "stored")).isEqualTo("stored");
+            assertThat(cache.get("test", "cache:v1:tls", String.class, () -> "not read")).isEqualTo("stored");
+        } finally {
+            connection.destroy();
+        }
     }
 
     @Test

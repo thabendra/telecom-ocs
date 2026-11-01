@@ -28,6 +28,7 @@ import org.springframework.security.oauth2.jwt.JwtEncoderParameters;
 import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
 import org.springframework.security.oauth2.jwt.NimbusJwtEncoder;
 import org.springframework.web.client.HttpClientErrorException;
+import org.springframework.web.client.HttpServerErrorException;
 import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestOperations;
 
@@ -174,6 +175,29 @@ class SigningKeysTest {
         }
 
         assertThat(breaker.getState()).isEqualTo(CircuitBreaker.State.OPEN);
+        assertThat(find("key-1")).hasSize(1);
+    }
+
+    @Test
+    void aServerErrorCountsAsAFailure() {   // unlike a 404, 5xx says the server is in trouble
+        when(rest.getForObject(URI, String.class))
+                .thenThrow(new HttpServerErrorException(HttpStatus.SERVICE_UNAVAILABLE));
+
+        for (int i = 0; i < 3; i++) {
+            keys.refresh();
+        }
+
+        assertThat(breaker.getState()).isEqualTo(CircuitBreaker.State.OPEN);
+    }
+
+    @Test
+    void lookingForANewKeyDuringAnOutageKeepsTheOldOnes() throws Exception {
+        serverHas(keyOne);
+        find("key-1");
+        serverIsDown();
+
+        assertThat(find("key-2")).isEmpty();
+
         assertThat(find("key-1")).hasSize(1);
     }
 

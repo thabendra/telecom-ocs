@@ -881,8 +881,18 @@ This needs a network plugin that enforces it: without one the policies are silen
 
 ```bash
 scripts/generate-dev-certs.sh   # once: the tests use the certificates in certs/
-mvn test
+scripts/test-all.sh             # everything, all three modules, as CI does (TE-4)
+mvn test                        # only the backend, for working on it
 ```
+
+**A pass means nothing was skipped (TE-4).** Testcontainers skips a test class without a word when Docker isn't there, so
+`mvn test` can be green having tested almost nothing. `test-all.sh` needs a container to start first, then reads
+every report: it fails on any failure, any skipped test, or a test class that didn't run.
+
+**Coverage (TE-5).** `mvn verify` writes `target/site/jacoco/index.html` and fails if the charging, push, customer or staff
+package is under **80 % of lines**. The percentage isn't the point: the first report found 11 paths no test had
+ever run, among them blocking a user who runs out on an update, and freeing an idempotency lock after a `5xx`, which now
+have tests. Lines still uncovered are mostly what only a broken JVM can reach, and getters nothing calls.
 
 - `SubscriberServiceTest`, `OracleErrorsTest`: unit tests with Mockito, including mapping of Oracle errors.
 - `GatewayTlsTest`: real HTTPS on both ports: allowed gateway over REST and SOAP, no certificate,

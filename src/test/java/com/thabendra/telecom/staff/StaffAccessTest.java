@@ -116,6 +116,13 @@ class StaffAccessTest {
     // PR-2: packages, prices, speeds
 
     @Test
+    void theSpeedOfAnUnknownPlanIs404() throws Exception {
+        mvc.perform(put("/api/admin/plans/{code}/speed", "NO_SUCH_PLAN").with(TestUsers.admin())
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"maxBandwidthKbps\":2048}"))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
     void anAdminCreatesAPackageThatCustomersCanBuy() throws Exception {
         createPackage(TestUsers.admin())
                 .andExpect(status().isCreated())

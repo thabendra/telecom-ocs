@@ -17,7 +17,11 @@ jobs:
           cache: maven
       # test-only certificates for the mTLS gateway port (not in git)
       - run: bash scripts/generate-dev-certs.sh
-      # Docker is available on GitHub runners, so the Oracle Testcontainers tests run here too
-      - run: mvn -B verify
-      - run: mvn -B -f gateway-simulator/pom.xml verify
-      - run: mvn -B -f token-server/pom.xml verify
+      # TE-4, TE-5: all three modules; fails on a skipped test or under the coverage minimum. Docker is available
+      # on GitHub runners, so the Oracle Testcontainers tests run here too
+      - run: bash scripts/test-all.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-report
+          path: target/site/jacoco/

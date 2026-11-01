@@ -71,6 +71,25 @@ class PushCommandTest {
     }
 
     @Test
+    void runningOutOnAnUpdateBlocksTheUserToo() throws Exception {   // PU-1; found by the coverage report (TE-5)
+        createSubscriber("0.00");
+        String session = JsonPath.read(start(10240), "$.sessionId");
+
+        String answer = mvc.perform(post("/charging/v1/sessions/{id}/update", session).contentType(MediaType.APPLICATION_JSON)
+                        .with(TestCerts.gateway(COLOMBO))
+                        .header(IdempotencyFilter.KEY_HEADER, UUID.randomUUID().toString())
+                        .content("{\"requestNumber\":1,\"usedMb\":10240,\"requestedMb\":100}"))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+
+        assertThat(JsonPath.<String>read(answer, "$.result")).isEqualTo("DENY");
+        assertThat(commands()).hasSize(2).allSatisfy(command -> {
+            assertThat(command.get("ACTION")).isEqualTo("BLOCK");
+            assertThat(command.get("REASON")).isEqualTo("OUT_OF_QUOTA");
+        });
+    }
+
+    @Test
     void suspensionAndFraudBlockTheUser() throws Exception {
         createSubscriber("100.00");
 
