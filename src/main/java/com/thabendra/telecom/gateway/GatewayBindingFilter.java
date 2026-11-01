@@ -21,6 +21,7 @@ import java.util.regex.Pattern;
  * Runs after the access token was verified, and checks that the token and the TLS connection belong
  * to the same gateway:
  * <ul>
+ *   <li>the certificate isn't on the revocation list, otherwise 403 (SE-6)</li>
  *   <li>the connection's certificate name (CN) is an allowed gateway, otherwise 403 (SE-1)</li>
  *   <li>the token was issued to that gateway (sub = client_id = CN), otherwise 403: a Colombo token
  *       can't be used over a Kandy connection (SE-3)</li>
@@ -36,9 +37,11 @@ class GatewayBindingFilter extends OncePerRequestFilter {
     private static final Pattern COMMON_NAME = Pattern.compile("(?:^|,)CN=([^,]+)");
 
     private final GatewayProperties gateways;
+    private final RevocationList revocations;
 
-    GatewayBindingFilter(GatewayProperties gateways) {
+    GatewayBindingFilter(GatewayProperties gateways, RevocationList revocations) {
         this.gateways = gateways;
+        this.revocations = revocations;
     }
 
     @Override
@@ -56,6 +59,10 @@ class GatewayBindingFilter extends OncePerRequestFilter {
             return;
         }
         String gateway = commonName(certificate);
+        if (revocations.isRevoked(certificate)) {
+            reject(response, HttpServletResponse.SC_FORBIDDEN, "The certificate of " + gateway + " is revoked");
+            return;
+        }
         if (gateway == null || !gateways.allowed().contains(gateway)) {
             reject(response, HttpServletResponse.SC_FORBIDDEN, "Gateway " + gateway + " is not allowed");
             return;

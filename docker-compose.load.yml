@@ -1,0 +1,85 @@
+# TE-2: the backend with everything it needs, and k6 next to it, on one machine. Run it with
+# scripts/load-test.sh, which also fills the database. k6, the backend and Oracle share this computer's CPU, so
+# a number here says how this computer did, not what production will do. Local test passwords only.
+
+name: telecom-ocs-load   # its own project: never touches the containers of docker-compose.yml
+
+x-redis-files: &redis-files
+  - ./certs/redis.pem:/tls/redis.pem:ro
+  - ./certs/redis-key.pem:/tls/redis-key.pem:ro
+  - ./certs/ca.pem:/tls/ca.pem:ro
+  - ./docker/redis/users.acl:/etc/redis/users.acl:ro
+
+services:
+  oracle:
+    image: gvenzl/oracle-free:23-slim-faststart
+    environment:
+      ORACLE_PASSWORD: oracle
+      APP_USER: telecom
+      APP_USER_PASSWORD: telecom
+    healthcheck:
+      test: ["CMD", "healthcheck.sh"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
+  redis:
+    image: redis:7.4-alpine
+    command: >
+      redis-server --port 0 --tls-port 6379
+      --tls-cert-file /tls/redis.pem --tls-key-file /tls/redis-key.pem --tls-ca-cert-file /tls/ca.pem
+      --tls-auth-clients no --aclfile /etc/redis/users.acl
+      --maxmemory 256mb --maxmemory-policy noeviction
+    volumes: *redis-files
+
+  redis-cache:
+    image: redis:7.4-alpine
+    command: >
+      redis-server --port 0 --tls-port 6379
+      --tls-cert-file /tls/redis.pem --tls-key-file /tls/redis-key.pem --tls-ca-cert-file /tls/ca.pem
+      --tls-auth-clients no --aclfile /etc/redis/users.acl
+      --maxmemory 128mb --maxmemory-policy allkeys-lru --save "" --appendonly no
+    volumes: *redis-files
+
+  token-server:
+    build: token-server
+    environment:
+      TOKEN_ISSUER: https://token-server:9443
+    volumes:
+      - ./certs:/certs:ro
+
+  backend:
+    build: .
+    depends_on:
+      oracle:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      redis-cache:
+        condition: service_started
+      token-server:
+        condition: service_started
+    environment:
+      DB_URL: jdbc:oracle:thin:@oracle:1521/FREEPDB1
+      REDIS_HOST: redis
+      CACHE_REDIS_HOST: redis-cache
+      CACHE_REDIS_PORT: "6379"
+      TOKEN_ISSUER: https://token-server:9443
+      TOKEN_JWKS_URI: https://token-server:9443/oauth2/jwks
+      DB_POOL_SIZE: ${DB_POOL_SIZE:-10}
+      TELECOM_RATELIMIT_CAPACITY: ${RATE_LIMIT_BURST:-2000}
+      TELECOM_RATELIMIT_REFILLPERSECOND: ${RATE_LIMIT_REFILL:-1000}
+      TRACING_ENABLED: "false"
+    volumes:
+      - ./certs:/certs:ro
+
+  k6:
+    image: grafana/k6:0.54.0
+    profiles: [run]     # started on demand by scripts/load-test.sh
+    user: "0"           # writes to the mounted results folder
+    environment:
+      SSL_CERT_FILE: /certs/ca.pem    # k6 has no setting for a private CA; Go reads this one
+    volumes:
+      - ./load:/load:ro
+      - ./load/results:/results
+      - ./certs:/certs:ro

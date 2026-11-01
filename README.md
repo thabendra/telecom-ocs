@@ -139,7 +139,7 @@ call passes four checks:
   client, so there is no shared secret to leak or rotate.
 - Access tokens are JWTs signed with RSA, valid 5 minutes, with `aud=charging-api` and the bound
   certificate thumbprint `cnf.x5t#S256`. Asking for a scope the client doesn't have is `invalid_scope`.
-- `/oauth2/jwks` publishes the public key, readable without a certificate (`client-auth: want`).
+- `/oauth2/jwks` publishes the public keys, readable without a certificate (`client-auth: want`).
 
 The gateway simulator fetches a token at the start, reuses it until 30 s before it expires, and on a
 `401` fetches a new one once and sends the call again.
@@ -175,9 +175,70 @@ scripts/generate-dev-certs.sh   # certs/: dev CA, backend cert for localhost, ga
 | `pgw-colombo-01.p12`, `pgw-kandy-01.p12` | gateway key stores (allowed gateways) |
 | `pgw-unknown-99.p12` | signed by our CA but not allowed (`403`) |
 | `pgw-expired.p12`, `stranger.p12` | expired / signed by another CA (handshake fails) |
+| `gateways.crl`, `crl/` | the revocation list, and what signs it (SE-6) |
 
 In production the files come from a secret store (`TLS_DIR`, `TLS_KEYSTORE_PASSWORD`,
-`TLS_TRUSTSTORE_PASSWORD`), and revoking a single gateway (SE-6) is a later step.
+`TLS_TRUSTSTORE_PASSWORD`). Revoking one gateway and rotating certificates: see group 13 below.
+
+## Revoking a gateway and rotating keys (group 13)
+
+### Revoking one gateway (SE-6)
+
+A gateway's private key was stolen, or the gateway was retired. Its certificate is valid for 825 days, so
+it has to be turned off some other way:
+
+```bash
+scripts/revoke-gateway.sh pgw-colombo-01
+```
+
+This writes `certs/gateways.crl`, a standard certificate revocation list signed by our CA. The backend and the
+token server read it every 30 s, so **within 30 s** this gateway gets `403` from the backend, even with a valid
+token, and no new tokens. No other gateway is touched and nothing restarts.
+
+| Case | What happens |
+|---|---|
+| A broken file, or one not signed by a CA we trust | Refused; the last good list stays, so a bad file can't un-revoke anybody |
+| No list at all | Nobody is revoked, an error is logged and `GatewayRevocationListNotLoading` fires. Refusing every gateway would turn one missing file into a network outage |
+| The gateway gets a new certificate | `scripts/rotate-cert.sh`: a new serial number, not on the list, so it works again |
+| Locking it out for good | Also remove it from `telecom.gateways.allowed` and set `enabled: false` on its token server client, at the next deploy |
+
+The check runs per request, not in the TLS handshake, because Tomcat only reads a CRL when the connector restarts.
+
+### Rotating the signing key (SE-7)
+
+The token server keeps its keys in a directory (`SIGNING_KEY_DIR`), so **a restart keeps the key**. Every 30 days
+it rotates, in an order where no token is ever refused:
+
+```
+day 0     new key: published in /oauth2/jwks, not used yet
++15 min   it starts signing: every backend has read it by now (they read the keys every 10 minutes)
++25 min   the old key goes: the last token it signed (5 minutes) has expired
+```
+
+Every token names its key in `kid`. The backend's `SigningKeys` needs no change: it follows `/oauth2/jwks`. If a key
+is stolen, delete its file: the token server stops publishing it within a minute, and the backends stop trusting
+it at their next read (up to 10 minutes), which also refuses tokens it already signed.
+
+### Rotating certificates (SE-7)
+
+```bash
+scripts/rotate-cert.sh backend        # or token-server, or a gateway's name
+```
+
+A new private key and certificate replace the old file in one move. The backend's gateway port and the token server
+serve it **without a restart** (`reload-on-update`), 10 s after the file stops changing, and connections already
+open stay up. A gateway reads its file when it starts, and then needs a new access token, as tokens are bound to the
+certificate; the simulator already fetches a new one on a `401`.
+
+**Changing the CA itself** takes three steps, each one safe on its own:
+
+1. Add the new CA to every trust store, next to the old one. Services now trust both.
+2. Issue new certificates from the new CA, with `rotate-cert.sh`, one at a time.
+3. When nothing uses the old CA, remove it from the trust stores.
+
+The backend's clients (token server keys, Redis) read their trust store at start, so step 1 and step 3 take a rolling
+restart for those; with more than one copy that is still no downtime. Inside Docker on Windows or Mac, a file changed
+on the host may not wake the file watcher, so try this on Linux or Kubernetes.
 
 ## Safe retries: idempotency
 
@@ -255,7 +316,8 @@ so size it as `pool size x most copies <= sessions Oracle can take` and cap the 
 balance; a refused new session only tries again. So `reserved-slots` (3 of the 10) are kept for those two,
 over REST and SOAP. Everything else, new sessions first of all, is refused with `503` + `Retry-After` at
 once when it would need one of them, and counted in `ocs_load_shed_total`. With little traffic an update
-simply takes any free slot. The gateway doesn't count a `503` with `Retry-After` towards its circuit
+simply takes any free slot. When Oracle is saturated, slots clear slowly, so an update may wait 150 ms for one
+(`ongoing-wait`, under the gateway's 200 ms per try), and **while any update waits, no new work starts**. The gateway doesn't count a `503` with `Retry-After` towards its circuit
 breaker: the backend is up, and an open breaker would stop the updates these slots are kept for.
 
 ```yaml
@@ -526,7 +588,7 @@ call (`tryAcquirePermission`) and reports the result (`onSuccess` / `onError`).
 | | Redis (CB-1) | Signing keys (CB-2), one per server |
 |---|---|---|
 | **Calls** | many per second | rare |
-| **Opens when** | 50 % of the last 20 calls failed, or were slower than 100 ms (at least 10 calls) | 3 failures in a row |
+| **Opens when** | In the last 10 s, 50 % of the calls failed or 80 % were slower than 300 ms (at least 10 calls) | 3 failures in a row |
 | **Stays open** | 5 s | 30 s |
 | **Half-open** | 3 test calls | 1 test call |
 | **Counts as failure** | connection errors, timeouts (an error answer like `NOPERM` means Redis is alive) | no answer, 5xx (a 404 means the server is alive) |
@@ -746,6 +808,31 @@ STAFF=$(curl -s -d grant_type=password -d client_id=admin-portal -d username=adm
 curl -s -H "Authorization: Bearer $STAFF" http://localhost:8080/api/admin/packages
 ```
 
+## Load tests (group 14)
+
+Three [k6](https://k6.io) tests, each over real mTLS with a real token, against real Oracle and Redis:
+
+```bash
+scripts/load-test.sh charging      # TE-2, CH-9: p99 of every charging call under 50 ms at the target load
+scripts/load-test.sh rate-limit    # TE-2, RL-1: over its limit a gateway gets 429; the other gateway isn't touched
+scripts/load-test.sh overload      # RL-5: new sessions are refused, updates keep working
+```
+
+Each one starts `docker-compose.load.yml`, fills the database with 2000 subscribers, runs, and stops. The exit code is
+0 only when its limits held, and the summary goes to `load/results/`.
+
+| Test | Load | Fails when |
+|---|---|---|
+| `charging` | `TARGET_RPS` calls per second (300), as start + update + release, for 2 minutes after a 30 s warm-up | p99 of all calls, or of any one kind, is over `P99_MS` (50); over 0.1 % fail; k6 couldn't keep the rate |
+| `rate-limit` | A limit of burst 100 + 50 per second for this run, as one computer can't reach the default 1000 per second. Colombo 150 per second, Kandy 20 per second, for 60 s | Colombo passes more than burst + refill (+5 %) or under 90 % of the refill; no `429`; Kandy gets any `429` or over 1 % fail |
+| `overload` | 900 new sessions per second and 50 updates per second, for 60 s | No new session was refused (so it wasn't an overload), or over 1 % of updates got `503` |
+
+**The target load is a choice, not a fact.** CH-9 says "at the target load", and no number was ever agreed, so 300 calls
+per second is a starting point for one laptop. A real operator would size it: subscribers online x how often each
+reports. **These tests measure one computer** running k6, the backend and Oracle together, so a result says how this
+setup did, not what production will do. A failed `charging` run on a laptop may mean the laptop is the limit; `DB_POOL_SIZE`
+and `TARGET_RPS` show where the limit moves.
+
 ## Tests
 
 ```bash
@@ -780,6 +867,10 @@ mvn test
   for the in-memory bucket, the fallback share and overrides, and the `503` bulkhead with its load
   shedding (RL-5). `FailOpenTest` in the simulator: the limits, the same request sent again, the usage
   charged afterwards (RL-6).
+- `RevocationListTest`, `RevokedGatewayTest`: real CRL files: one gateway refused and the other not, also over real
+  mTLS; a broken or foreign list can't un-revoke. In the token server: `SigningKeyStoreTest` (the rotation steps with
+  a moved clock), `CertificateReloadTest` (a new key store served with no restart), and in `TokenServerTest` the
+  key named in the token, a revoked gateway and a disabled client.
 - `CacheTest`: the cache against Oracle + Redis: the second read is a hit, a staff change shows at once, the
   balance is live, a rollback deletes nothing, the delayed delete, one reload for many requests, Redis paused.
   `RedisEvictionTest`: real Redis servers with the two policies, filled up: the cache evicts, data refuses.

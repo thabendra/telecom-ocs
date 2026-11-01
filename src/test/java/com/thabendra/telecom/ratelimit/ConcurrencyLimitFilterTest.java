@@ -25,13 +25,13 @@ import static org.assertj.core.api.Assertions.fail;
 class ConcurrencyLimitFilterTest {
 
     private final ConcurrencyLimitFilter filter = new ConcurrencyLimitFilter(
-            new RateLimitProperties(10, 10, 1, Map.of(), 1, Duration.ofMillis(50), 0), new ObjectMapper(),
+            new RateLimitProperties(10, 10, 1, Map.of(), 1, Duration.ofMillis(50), 0, Duration.ofMillis(50)), new ObjectMapper(),
             new OcsMetrics(new SimpleMeterRegistry()));
 
     // RL-5: 3 slots, 1 of them only for update and release
     private final SimpleMeterRegistry meters = new SimpleMeterRegistry();
     private final ConcurrencyLimitFilter shedding = new ConcurrencyLimitFilter(
-            new RateLimitProperties(10, 10, 1, Map.of(), 3, Duration.ofMillis(50), 1), new ObjectMapper(),
+            new RateLimitProperties(10, 10, 1, Map.of(), 3, Duration.ofMillis(50), 1, Duration.ofMillis(800)), new ObjectMapper(),
             new OcsMetrics(meters));
     private final CountDownLatch finish = new CountDownLatch(1);
 
@@ -82,6 +82,35 @@ class ConcurrencyLimitFilterTest {
         assertRuns(request("/charging/v1/sessions"));   // the two updates took no slot from other work
 
         release(one, two);
+    }
+
+    @Test
+    void whileAnUpdateWaitsNoNewWorkStartsAndThenItGetsTheSlot() throws Exception {
+        Thread one = hold("/charging/v1/sessions");   // one slot of other work is still free ...
+        Thread two = hold("/charging/v1/sessions/a/update");
+        Thread three = hold("/charging/v1/sessions/b/update");   // ... but every slot is taken
+        AtomicBoolean ran = new AtomicBoolean();
+        Thread waiting = new Thread(() -> {
+            try {
+                shedding.doFilter(request("/charging/v1/sessions/c/update"), new MockHttpServletResponse(),
+                        (req, res) -> ran.set(true));
+            } catch (Exception ignored) {
+                // checked by ran
+            }
+        });
+        waiting.start();
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        while (shedding.ongoingWaiting() == 0 && System.nanoTime() < deadline) {
+            Thread.sleep(1);
+        }
+
+        assertRefused("/charging/v1/sessions");
+        assertThat(meters.counter("ocs.load.shed").count()).isEqualTo(1);
+
+        release(one, two, three);
+        waiting.join(5000);
+        assertThat(ran).isTrue();
+        assertThat(shedding.freeSlots()).isEqualTo(3);
     }
 
     // a request that stays inside the filter until finish

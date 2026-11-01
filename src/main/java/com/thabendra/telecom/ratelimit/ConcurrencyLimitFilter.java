@@ -20,6 +20,7 @@ import java.io.IOException;
 import java.util.Set;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Bulkhead in front of the database (RL-4): at most maxInFlight requests of this backend copy run at
@@ -31,7 +32,9 @@ import java.util.concurrent.TimeUnit;
  * Load shedding (RL-5): update and release report usage that has to be charged and free reserved balance,
  * while a refused new session only tries again. So reservedSlots slots are kept for those two: everything
  * else (new sessions first of all) is refused at once when it would need one of them. The slots aren't
- * set aside for good: with little traffic an update simply takes any free slot.
+ * set aside for good: with little traffic an update simply takes any free slot. Keeping slots isn't enough when
+ * Oracle is saturated, as they then clear slowly: so an update may wait longer, and while one waits no other
+ * work starts, which also takes load off Oracle.
  */
 @Component
 @Order(FilterOrder.CONCURRENCY_LIMIT)
@@ -45,6 +48,8 @@ public class ConcurrencyLimitFilter extends OncePerRequestFilter {
     private final Semaphore slots;
     private final Semaphore otherWork;
     private final long waitMs;
+    private final long ongoingWaitMs;
+    private final AtomicInteger ongoingWaiting = new AtomicInteger();
     private final ObjectMapper json;
     private final OcsMetrics metrics;
     private final AntPathMatcher paths = new AntPathMatcher();
@@ -53,9 +58,15 @@ public class ConcurrencyLimitFilter extends OncePerRequestFilter {
         this.slots = new Semaphore(properties.maxInFlight(), true);   // fair: first come, first served
         this.otherWork = new Semaphore(Math.max(1, properties.maxInFlight() - properties.reservedSlots()));
         this.waitMs = properties.inFlightWait().toMillis();
+        this.ongoingWaitMs = properties.ongoingWait().toMillis();
         this.json = json;
         this.metrics = metrics;
         metrics.bulkheadSlots(slots::availablePermits);
+    }
+
+    /** Update and release calls waiting for a slot right now (for tests). */
+    int ongoingWaiting() {
+        return ongoingWaiting.get();
     }
 
     /** Slots free right now (for tests and metrics). */
@@ -67,13 +78,13 @@ public class ConcurrencyLimitFilter extends OncePerRequestFilter {
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain)
             throws ServletException, IOException {
         boolean ongoing = isOngoingSession(request);
-        if (!ongoing && !otherWork.tryAcquire()) {
+        if (!ongoing && (ongoingWaiting.get() > 0 || !otherWork.tryAcquire())) {
             metrics.loadShed();
             refuse(request, response);
             return;
         }
         try {
-            runInASlot(request, response, chain);
+            runInASlot(ongoing, request, response, chain);
         } finally {
             if (!ongoing) {
                 otherWork.release();
@@ -81,16 +92,9 @@ public class ConcurrencyLimitFilter extends OncePerRequestFilter {
         }
     }
 
-    private void runInASlot(HttpServletRequest request, HttpServletResponse response, FilterChain chain)
-            throws ServletException, IOException {
-        boolean acquired;
-        try {
-            acquired = slots.tryAcquire(waitMs, TimeUnit.MILLISECONDS);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            acquired = false;
-        }
-        if (!acquired) {
+    private void runInASlot(boolean ongoing, HttpServletRequest request, HttpServletResponse response,
+                            FilterChain chain) throws ServletException, IOException {
+        if (!(ongoing ? waitAsOngoing() : freeSlot(waitMs))) {
             metrics.bulkheadRejected();
             refuse(request, response);
             return;
@@ -99,6 +103,24 @@ public class ConcurrencyLimitFilter extends OncePerRequestFilter {
             chain.doFilter(request, response);
         } finally {
             slots.release();   // always, also when the request fails
+        }
+    }
+
+    private boolean waitAsOngoing() {
+        ongoingWaiting.incrementAndGet();
+        try {
+            return freeSlot(ongoingWaitMs);
+        } finally {
+            ongoingWaiting.decrementAndGet();
+        }
+    }
+
+    private boolean freeSlot(long wait) {
+        try {
+            return slots.tryAcquire(wait, TimeUnit.MILLISECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return false;
         }
     }
 

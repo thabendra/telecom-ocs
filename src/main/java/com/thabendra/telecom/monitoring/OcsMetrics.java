@@ -23,6 +23,7 @@ import java.util.function.Supplier;
  *   ocs_sessions_expired_total                                  sessions a gateway never released (CH-8)
  *   ocs_heavy_users_flagged_total                               subscribers who became heavy users (RL-3)
  *   ocs_circuit_state{name, state}, ocs_circuit_rejected_total  circuit breakers: redis, key servers (CB-3)
+ *   ocs_gateway_crl_failures_total                              revocation list not loaded: revocations may not work (SE-6)
  *   ocs_cache_reads_total{name, result}                         hit / miss / waited / wait-gave-up / redis-down (CA-1)
  *   ocs_redis_memory_used_bytes, ocs_redis_memory_max_bytes, ocs_redis_evicted_keys{server}   data / cache (RD-10)
  * </pre>
@@ -66,6 +67,12 @@ public class OcsMetrics {
     public void loadShed() {
         Counter.builder("ocs.load.shed")
                 .description("Requests refused with 503 to keep database slots for update and release")
+                .register(registry).increment();
+    }
+
+    public void revocationListFailed() {
+        Counter.builder("ocs.gateway.crl.failures")
+                .description("Times the gateway revocation list could not be loaded")
                 .register(registry).increment();
     }
 

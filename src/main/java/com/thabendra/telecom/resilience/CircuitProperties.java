@@ -11,7 +11,8 @@ public record CircuitProperties(Redis redis, SigningKeys signingKeys) {
     /**
      * CB-1. Many calls per second, so it goes by a percentage: one failed call among many is just noise.
      *
-     * @param windowCalls    how many of the latest calls count
+     * @param windowSeconds  the calls of this many latest seconds count: seconds and not a number of calls,
+     *                       as 20 calls can be a few milliseconds under load, and one JVM pause would fill them
      * @param minimumCalls   no decision before this many calls (1 failure of 2 would already be 50 %)
      * @param failurePercent this share of failed calls opens it
      * @param slowCall       a call slower than this counts as slow
@@ -19,7 +20,7 @@ public record CircuitProperties(Redis redis, SigningKeys signingKeys) {
      * @param openFor        how long it refuses calls before testing again
      * @param testCalls      calls let through in half-open to decide
      */
-    public record Redis(int windowCalls, int minimumCalls, float failurePercent, Duration slowCall, float slowPercent,
+    public record Redis(int windowSeconds, int minimumCalls, float failurePercent, Duration slowCall, float slowPercent,
                         Duration openFor, int testCalls) {
     }
 

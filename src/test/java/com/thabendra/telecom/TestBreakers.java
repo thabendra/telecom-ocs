@@ -16,7 +16,7 @@ public final class TestBreakers {
 
     public static CircuitProperties properties() {
         return new CircuitProperties(
-                new CircuitProperties.Redis(20, 10, 50, Duration.ofMillis(100), 50, Duration.ofSeconds(5), 3),
+                new CircuitProperties.Redis(10, 10, 50, Duration.ofMillis(300), 80, Duration.ofSeconds(5), 3),
                 new CircuitProperties.SigningKeys(3, Duration.ofSeconds(30), Duration.ofSeconds(2),
                         Duration.ofMinutes(10), Duration.ofSeconds(30), false));
     }

@@ -30,10 +30,15 @@ spring:
         bundle: redis-client
   # SE-1: the gateway port's certificate and the only CA it trusts (TEST-ONLY files from
   # scripts/generate-dev-certs.sh; in production these come from a secret store)
+  # SE-7: reload-on-update: a new backend.p12 or trust store is served without a restart
   ssl:
     bundle:
+      watch:
+        file:
+          quiet-period: 10s      # a file being replaced is read when it has stopped changing
       jks:
         gateway-port:
+          reload-on-update: true
           key:
             alias: backend
           keystore:
@@ -111,6 +116,11 @@ telecom:
     allowed:
       - pgw-colombo-01
       - pgw-kandy-01
+    # SE-6: scripts/revoke-gateway.sh writes this list
+    revocation:
+      location: ${TLS_DIR:file:certs}/gateways.crl
+      reload-every: 30s
+      reload: true
     # SE-3 / SE-5: every gateway call also needs an access token from the token server
     token:
       issuer: ${TOKEN_ISSUER:https://localhost:9443}
@@ -126,6 +136,7 @@ telecom:
     overrides: {}                  # e.g. pgw-kandy-01: { capacity: 500, refill-per-second: 250 }
     max-in-flight: ${DB_POOL_SIZE:10}
     in-flight-wait: 50ms
+    ongoing-wait: 150ms            # RL-5: how long update and release may wait: under the gateway's 200 ms per try
     reserved-slots: 3              # RL-5: of max-in-flight, only update and release may use these
   # group 12: the cache of what customers read often, in its own Redis (RD-10, CA-1..5)
   cache:
@@ -146,11 +157,11 @@ telecom:
   # group 11: circuit breakers in this backend, towards what it calls
   circuit:
     redis:                     # CB-1: many calls per second, so a percentage of the latest calls
-      window-calls: 20
+      window-seconds: 10
       minimum-calls: 10
       failure-percent: 50
-      slow-call: 100ms         # Redis normally answers in a few ms
-      slow-percent: 50
+      slow-call: 300ms         # Redis normally answers in a few ms; a loaded backend shows more than it really takes
+      slow-percent: 80
       open-for: 5s
       test-calls: 3
     signing-keys:              # CB-2: rare calls, so failures in a row; the last good keys stay in use

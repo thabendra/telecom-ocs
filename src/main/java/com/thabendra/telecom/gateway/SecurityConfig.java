@@ -24,6 +24,7 @@ import org.springframework.security.web.util.matcher.RequestMatcher;
  *     <ol>
  *       <li>TLS handshake: a certificate from our CA (SE-1)</li>
  *       <li>Authorization: Bearer access token from our token server: signature, iss, aud, exp (SE-3)</li>
+ *       <li>the certificate isn't revoked (SE-6)</li>
  *       <li>token and certificate belong to the same allowed gateway, cnf matches (SE-1, SE-3, SE-4)</li>
  *       <li>the token has scope charging:write, or notify:read for the push channel (SE-5, PU-3)</li>
  *     </ol>
@@ -38,11 +39,11 @@ public class SecurityConfig {
 
     @Bean
     @Order(1)
-    SecurityFilterChain gatewayApi(HttpSecurity http, GatewayProperties gateways, JwtDecoder gatewayTokenDecoder)
-            throws Exception {
+    SecurityFilterChain gatewayApi(HttpSecurity http, GatewayProperties gateways, JwtDecoder gatewayTokenDecoder,
+                                   RevocationList revocations) throws Exception {
         http.securityMatcher(gatewayPaths(gateways))
                 .oauth2ResourceServer(resource -> resource.jwt(jwt -> jwt.decoder(gatewayTokenDecoder)))
-                .addFilterAfter(new GatewayBindingFilter(gateways), BearerTokenAuthenticationFilter.class)
+                .addFilterAfter(new GatewayBindingFilter(gateways, revocations), BearerTokenAuthenticationFilter.class)
                 .authorizeHttpRequests(auth -> auth
                         // the push channel (PU-3) reads commands: notify:read
                         .requestMatchers(AntPathRequestMatcher.antMatcher("/charging/v1/commands/**"))

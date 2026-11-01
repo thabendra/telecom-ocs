@@ -20,8 +20,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * CB-1 without Redis: what counts as a failure, how the breaker opens, tests in half-open and closes
- * again. A small window and short waits: of the last 4 calls, 50 % failed or slow (over 40 ms) open it,
- * for 150 ms, and then 2 test calls decide.
+ * again. Short waits: of the last 10 s, at least 4 calls and 50 % failed or slow (over 40 ms) open it, for
+ * 150 ms, and then 2 test calls decide.
  */
 class RedisBreakerTest {
 
@@ -35,7 +35,7 @@ class RedisBreakerTest {
     void setUp() {
         meters = new SimpleMeterRegistry();
         CircuitProperties small = new CircuitProperties(
-                new CircuitProperties.Redis(4, 4, 50, Duration.ofMillis(40), 50, Duration.ofMillis(150), 2),
+                new CircuitProperties.Redis(10, 4, 50, Duration.ofMillis(40), 50, Duration.ofMillis(150), 2),
                 TestBreakers.properties().signingKeys());
         breaker = new RedisBreaker(new Circuits(new OcsMetrics(meters)), small);
     }
@@ -103,6 +103,21 @@ class RedisBreakerTest {
         }
 
         assertThat(breaker.state()).isEqualTo(CircuitBreaker.State.OPEN);
+    }
+
+    @Test
+    void aShortPauseAmongManyCallsDoesNotOpenIt() {   // a load test showed this: one JVM pause isn't an outage
+        for (int i = 0; i < 100; i++) {
+            breaker.call(this::counted);
+        }
+        for (int i = 0; i < 10; i++) {
+            breaker.call(() -> {
+                sleep(50);
+                return "late";
+            });
+        }
+
+        assertThat(breaker.state()).isEqualTo(CircuitBreaker.State.CLOSED);
     }
 
     @Test

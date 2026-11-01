@@ -17,10 +17,11 @@ import java.util.Map;
  *                        its database pool. Rule: pool size x most copies <= sessions the database can take
  * @param inFlightWait    how long a request may wait for a free slot before it gets 503
  * @param reservedSlots   RL-5: of maxInFlight, the slots only update and release may use
+ * @param ongoingWait     RL-5: how long update and release may wait for a free slot, longer than other work
  */
 @ConfigurationProperties("telecom.rate-limit")
 public record RateLimitProperties(long capacity, double refillPerSecond, int instances, Map<String, Limit> overrides,
-                                  int maxInFlight, Duration inFlightWait, int reservedSlots) {
+                                  int maxInFlight, Duration inFlightWait, int reservedSlots, Duration ongoingWait) {
 
     /** One gateway's bucket: burst size and steady rate. */
     public record Limit(long capacity, double refillPerSecond) {

@@ -12,6 +12,8 @@
 #   certs/pgw-colombo-01.p12 (.pem)        gateway client certificates
 #   certs/pgw-kandy-01.p12   (.pem)
 #   certs/pgw-unknown-99.p12 (.pem)        signed by our CA, but not in telecom.gateways.allowed (403)
+#   certs/gateways.crl                     the revocation list (SE-6), empty; certs/crl/ keeps its state, with the CA key
+#   certs/test-crls/                       revocation lists for the tests
 #   certs/pgw-expired.p12                  signed by our CA, expired (handshake fails)
 #   certs/stranger.p12                     CN=pgw-colombo-01 but signed by another CA (handshake fails)
 #
@@ -20,7 +22,7 @@ set -euo pipefail
 
 DIR="${1:-certs}"
 PASS="changeit"
-KEY=(-keyalg EC -groupname secp256r1 -storetype PKCS12 -storepass "$PASS")
+source "$(dirname "$0")/dev-certs-lib.sh"
 
 rm -rf "$DIR"
 mkdir -p "$DIR"
@@ -29,20 +31,6 @@ mkdir -p "$DIR"
 make_ca() {
   keytool -genkeypair -alias ca -dname "CN=$2" -ext bc:c -validity 3650 -keystore "$DIR/$1.p12" "${KEY[@]}"
   keytool -exportcert -alias ca -rfc -keystore "$DIR/$1.p12" -storepass "$PASS" -file "$DIR/$1.pem"
-}
-
-# issue <file> <subject> <extensions> <ca file> [extra gencert options...]
-issue() {
-  local name="$1" subject="$2" ext="$3" ca="$4"
-  shift 4
-  keytool -genkeypair -alias "$name" -dname "$subject" -keystore "$DIR/$name.p12" "${KEY[@]}"
-  keytool -certreq -alias "$name" -keystore "$DIR/$name.p12" -storepass "$PASS" -file "$DIR/$name.csr"
-  keytool -gencert -alias ca -keystore "$DIR/$ca.p12" -storepass "$PASS" -rfc \
-    -infile "$DIR/$name.csr" -outfile "$DIR/$name.pem" -ext "$ext" "$@"
-  # the CA first, so keytool can build the chain, then the signed certificate over the key pair
-  keytool -importcert -noprompt -alias ca -file "$DIR/$ca.pem" -keystore "$DIR/$name.p12" -storepass "$PASS"
-  keytool -importcert -noprompt -alias "$name" -file "$DIR/$name.pem" -keystore "$DIR/$name.p12" -storepass "$PASS"
-  rm "$DIR/$name.csr"
 }
 
 make_ca ca "Telecom Dev CA"
@@ -58,8 +46,21 @@ issue redis "CN=redis, O=Telecom Dev" "SAN=dns:localhost,ip:127.0.0.1,dns:redis,
 openssl pkcs12 -in "$DIR/redis.p12" -nocerts -nodes -passin "pass:$PASS" | openssl pkey -out "$DIR/redis-key.pem"
 issue pgw-colombo-01 "CN=pgw-colombo-01, O=Telecom Dev" EKU=clientAuth ca -validity 825
 issue pgw-kandy-01 "CN=pgw-kandy-01, O=Telecom Dev" EKU=clientAuth ca -validity 825
+gateway_key "$DIR" pgw-colombo-01
+gateway_key "$DIR" pgw-kandy-01
 issue pgw-unknown-99 "CN=pgw-unknown-99, O=Telecom Dev" EKU=clientAuth ca -validity 825
 issue pgw-expired "CN=pgw-expired, O=Telecom Dev" EKU=clientAuth ca -startdate -400d -validity 30
 issue stranger "CN=pgw-colombo-01, O=Somebody Else" EKU=clientAuth other-ca -validity 825
+
+# SE-6: the live revocation list, empty for now; scripts/revoke-gateway.sh adds to it
+make_crl_db "$DIR/crl" ca
+write_crl "$DIR/crl" "$DIR/gateways.crl"
+# ... and two more for the tests: one gateway revoked, and a list signed by a CA nobody trusts
+mkdir -p "$DIR/test-crls"
+make_crl_db "$DIR/test-crls/colombo-db" ca
+revoke "$DIR/test-crls/colombo-db" pgw-colombo-01
+write_crl "$DIR/test-crls/colombo-db" "$DIR/test-crls/colombo-revoked.crl"
+make_crl_db "$DIR/test-crls/wrong-ca-db" other-ca
+write_crl "$DIR/test-crls/wrong-ca-db" "$DIR/test-crls/wrong-ca.crl"
 
 echo "Test certificates written to $DIR/ (password: $PASS)"

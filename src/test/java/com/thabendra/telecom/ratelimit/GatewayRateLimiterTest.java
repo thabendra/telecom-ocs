@@ -20,7 +20,7 @@ class GatewayRateLimiterTest {
 
     // 6 burst, 3/s per gateway, at most 3 backend copies; pgw-kandy-01 has a smaller limit
     private final RateLimitProperties properties = new RateLimitProperties(6, 3, 3,
-            Map.of("pgw-kandy-01", new RateLimitProperties.Limit(2, 1)), 10, Duration.ofMillis(50), 3);
+            Map.of("pgw-kandy-01", new RateLimitProperties.Limit(2, 1)), 10, Duration.ofMillis(50), 3, Duration.ofMillis(150));
 
     @Test
     void usesTheSharedRedisBucketWithTheGatewaysLimit() {

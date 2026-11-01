@@ -19,7 +19,9 @@ import java.util.function.Supplier;
  * <p>
  * Counted as failures: connection errors and timeouts. An error answer (for example NOPERM) means Redis
  * is alive, so it counts as a success: opening the breaker would not help, and it is a bug to fix.
- * Slow answers count separately (slowCall), because a Redis that answers late hurts as much as none.
+ * Slow answers count separately (slowCall), because a Redis that answers late hurts as much as none. The time
+ * is measured here, in the JVM, so a backend short of CPU makes a healthy Redis look slow: the limit is well above
+ * a pause, and nearly all calls of 10 s must be slow. A real outage opens it through the timeouts anyway.
  */
 @Component
 public class RedisBreaker {
@@ -41,8 +43,8 @@ public class RedisBreaker {
         this.circuits = circuits;
         CircuitProperties.Redis redis = properties.redis();
         this.breaker = circuits.create(name, CircuitBreakerConfig.custom()
-                .slidingWindowType(CircuitBreakerConfig.SlidingWindowType.COUNT_BASED)
-                .slidingWindowSize(redis.windowCalls())
+                .slidingWindowType(CircuitBreakerConfig.SlidingWindowType.TIME_BASED)
+                .slidingWindowSize(redis.windowSeconds())
                 .minimumNumberOfCalls(redis.minimumCalls())
                 .failureRateThreshold(redis.failurePercent())
                 .slowCallDurationThreshold(redis.slowCall())

@@ -41,6 +41,14 @@ groups:
         annotations:
           summary: "New sessions refused with 503: this backend copy is overloaded"
 
+      # SE-6: the list isn't loading, so a gateway revoked now would not be refused
+      - alert: GatewayRevocationListNotLoading
+        expr: max(increase(ocs_gateway_crl_failures_total[5m])) > 0
+        for: 5m
+        labels: { severity: critical }
+        annotations:
+          summary: "The gateway revocation list can't be loaded: new revocations don't work"
+
       # RD-10: the data Redis uses noeviction, so when it is full writes fail: act long before that
       - alert: RedisDataMemoryHigh
         expr: max(ocs_redis_memory_used_bytes{server="data"}) / max(ocs_redis_memory_max_bytes{server="data"} > 0) > 0.8

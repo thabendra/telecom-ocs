@@ -109,6 +109,7 @@ services:
       TOKEN_ISSUER: https://172.30.2.11:9443
     volumes:
       - ./certs:/certs:ro
+      - signing-keys:/keys      # SE-7: a restart keeps the signing key
     networks:
       backend-net: { ipv4_address: 172.30.2.11 }
 
@@ -169,3 +170,4 @@ networks:
 
 volumes:
   wireguard-keys:
+  signing-keys:
