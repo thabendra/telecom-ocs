@@ -834,6 +834,11 @@ each reports, then a limit per gateway from what its own Oracle can take. **Thes
 setup did, not what production will do. A failed `charging` run on a laptop may mean the laptop is the limit; `DB_POOL_SIZE`
 and `TARGET_RPS` show where the limit moves.
 
+**A fresh copy is slower.** A cold JVM taking a flood at once sheds calls in its first seconds, and `rate-limit` can fail on
+it while passing on a warmed-up one. `StartupWarmup` runs the Redis scripts and database reads for 5 s before the copy says
+it is ready (`telecom.warmup.*`). Over 3 cold starts each it cut the other gateway's failures from 4.92 % to 2.25 %, still over
+the test's 1 %: mTLS handshakes and the security filters can't be warmed from inside. JVM settings didn't help.
+
 ## Kubernetes (group 15)
 
 `k8s/` holds the files for a cluster. **Nothing has been installed**; they are checked without a cluster:

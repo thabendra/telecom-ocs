@@ -31,7 +31,8 @@ import java.lang.annotation.Target;
                 "telecom.cache.redis.host=", "telecom.cache.monitor=false",
                 // RevokedGatewayTest writes this one; none at all means nobody is revoked
                 "telecom.gateways.revocation.location=file:target/test-gateways.crl",
-                "telecom.gateways.revocation.reload=false"})
+                "telecom.gateways.revocation.reload=false",
+                "telecom.warmup.enabled=false"})
 @AutoConfigureMockMvc
 // metrics export (Prometheus) is off in tests unless asked for; tracing stays off
 @AutoConfigureObservability(tracing = false)

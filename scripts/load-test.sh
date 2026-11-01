@@ -31,7 +31,7 @@ mkdir -p load/results
 echo "waiting for the backend ..."
 ready=""
 for _ in $(seq 1 60); do
-  if "${COMPOSE[@]}" exec -T backend curl -s -m 3 http://localhost:8081/actuator/health 2>/dev/null | grep -q '"status":"UP"'; then
+  if "${COMPOSE[@]}" exec -T backend curl -s -m 3 http://localhost:8081/actuator/health/readiness 2>/dev/null | grep -q '"status":"UP"'; then
     ready=yes; break
   fi
   sleep 3
