@@ -4,7 +4,7 @@ import { check } from 'k6';
 import exec from 'k6/execution';
 import { fetchToken, release, start, subscriber, tlsAuth, update } from './lib.js';
 
-const TARGET_RPS = Number(__ENV.TARGET_RPS || 300);
+const TARGET_RPS = Number(__ENV.TARGET_RPS || 100);
 const P99_MS = Number(__ENV.P99_MS || 50);
 const SESSIONS_PER_SECOND = Math.ceil(TARGET_RPS / 3);
 

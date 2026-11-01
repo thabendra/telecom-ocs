@@ -143,8 +143,10 @@ telecom:
       notify-scope: notify:read      # the push channel (PU-3)
   # group 4: per-gateway token bucket in Redis (RL-1, RD-3) and the database bulkhead (RL-4)
   rate-limit:
-    capacity: 2000                 # burst per gateway
-    refill-per-second: 1000        # steady rate per gateway
+    # From what was measured (group 14): this setup holds p99 near 50 ms up to about 200 calls per second, and all
+    # gateways' limits together should fit in that: 2 gateways x 100. Measure again on other hardware
+    capacity: 200                  # burst per gateway
+    refill-per-second: 100         # steady rate per gateway
     instances: ${MAX_INSTANCES:3}  # most backend copies (autoscaler max); used only while Redis is down (RD-6)
     overrides: {}                  # e.g. pgw-kandy-01: { capacity: 500, refill-per-second: 250 }
     max-in-flight: ${DB_POOL_SIZE:10}

@@ -6,7 +6,7 @@ import { Counter, Rate } from 'k6/metrics';
 import { fetchToken, start, subscriber, tlsAuth, update } from './lib.js';
 
 const SESSIONS = 100;
-const NEW_PER_SECOND = Number(__ENV.NEW_PER_SECOND || 900);   // under the 1000/s rate limit: this tests the slots
+const NEW_PER_SECOND = Number(__ENV.NEW_PER_SECOND || 900);   // load-test.sh raises the rate limit: this tests the slots
 const UPDATES_PER_SECOND = Number(__ENV.UPDATES_PER_SECOND || 50);
 const DURATION = __ENV.DURATION || '60s';
 

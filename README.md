@@ -323,8 +323,8 @@ breaker: the backend is up, and an open breaker would stop the updates these slo
 ```yaml
 telecom:
   rate-limit:
-    capacity: 2000            # burst per gateway
-    refill-per-second: 1000   # steady rate per gateway
+    capacity: 200             # burst per gateway
+    refill-per-second: 100    # steady rate per gateway
     instances: 3              # most backend copies (fallback share)
     overrides: { pgw-kandy-01: { capacity: 500, refill-per-second: 250 } }
     max-in-flight: 10         # = spring.datasource.hikari.maximum-pool-size
@@ -823,13 +823,14 @@ Each one starts `docker-compose.load.yml`, fills the database with 2000 subscrib
 
 | Test | Load | Fails when |
 |---|---|---|
-| `charging` | `TARGET_RPS` calls per second (300), as start + update + release, for 2 minutes after a 30 s warm-up | p99 of all calls, or of any one kind, is over `P99_MS` (50); over 0.1 % fail; k6 couldn't keep the rate |
-| `rate-limit` | A limit of burst 100 + 50 per second for this run, as one computer can't reach the default 1000 per second. Colombo 150 per second, Kandy 20 per second, for 60 s | Colombo passes more than burst + refill (+5 %) or under 90 % of the refill; no `429`; Kandy gets any `429` or over 1 % fail |
-| `overload` | 900 new sessions per second and 50 updates per second, for 60 s | No new session was refused (so it wasn't an overload), or over 1 % of updates got `503` |
+| `charging` | `TARGET_RPS` calls per second (100), as start + update + release, for 2 minutes after a 30 s warm-up. Through one gateway, so this run raises its limit | p99 of all calls, or of any one kind, is over `P99_MS` (50); over 0.1 % fail; k6 couldn't keep the rate |
+| `rate-limit` | The real limit (burst 200, 100 per second). Colombo 300 per second, Kandy 50 per second, for 60 s | Colombo passes more than burst + refill (+5 %) or under 90 % of the refill; no `429`; Kandy gets any `429` or over 1 % fail |
+| `overload` | 900 new sessions per second and 50 updates per second, for 60 s. This run raises the limit, as it tests the slots | No new session was refused (so it wasn't an overload), or over 1 % of updates got `503` |
 
-**The target load is a choice, not a fact.** CH-9 says "at the target load", and no number was ever agreed, so 300 calls
-per second is a starting point for one laptop. A real operator would size it: subscribers online x how often each
-reports. **These tests measure one computer** running k6, the backend and Oracle together, so a result says how this
+**The numbers come from one laptop.** The target load is 100 calls per second, as that is what this setup holds with room
+to spare. The limit per gateway is 100 per second: it holds about 200 in all, and all gateways' limits together
+should fit in that, or one gateway can hurt another. A real operator would size both: subscribers online x how often
+each reports, then a limit per gateway from what its own Oracle can take. **These tests measure one computer** running k6, the backend and Oracle together, so a result says how this
 setup did, not what production will do. A failed `charging` run on a laptop may mean the laptop is the limit; `DB_POOL_SIZE`
 and `TARGET_RPS` show where the limit moves.
 

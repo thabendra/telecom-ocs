@@ -7,11 +7,11 @@ import { fetchToken, pollCommands, tlsAuth } from './lib.js';
 
 const ROLE = __ENV.ROLE || 'flood';
 const SECONDS = Number(__ENV.SECONDS || 60);
-const RATE = Number(__ENV.RATE || (ROLE === 'flood' ? 150 : 20));
+const RATE = Number(__ENV.RATE || (ROLE === 'flood' ? 300 : 50));
 
-// what scripts/load-test.sh sets for this test: under what one computer can serve, or the limit is never reached
-const BURST = Number(__ENV.RATE_LIMIT_BURST || 100);
-const REFILL_PER_SECOND = Number(__ENV.RATE_LIMIT_REFILL || 50);
+// telecom.rate-limit in application.yml
+const BURST = 200;
+const REFILL_PER_SECOND = 100;
 
 const passed = new Counter('passed_the_limiter');
 const limited = new Counter('limited_429');
