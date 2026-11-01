@@ -29,7 +29,9 @@ import java.util.function.Supplier;
  *       at once, without calling the backend</li>
  *   <li>RT-10: counters for retries, calls that succeeded after a retry, and calls that gave up</li>
  * </ul>
- * Only network errors and 5xx count as backend failures for the breaker; a 4xx is a healthy answer.
+ * Only network errors and 5xx count as backend failures for the breaker; a 4xx is a healthy answer, and
+ * so is a 503 with Retry-After: the backend is up and shedding load (RL-5). If that opened the breaker,
+ * refused new sessions would also stop the updates and releases the backend is keeping slots for.
  * Errors arrive as {@link BackendCallException}, so the same rules apply to REST and SOAP.
  */
 public class RetryingCaller {
@@ -136,8 +138,11 @@ public class RetryingCaller {
     }
 
     private static boolean isBackendFailure(RuntimeException e) {
-        return e instanceof BackendCallException call
-                && (call.status() == BackendCallException.NO_ANSWER || call.status() >= 500);
+        if (!(e instanceof BackendCallException call)) {
+            return false;
+        }
+        boolean shedding = call.status() == 503 && call.retryAfter() != null;
+        return !shedding && (call.status() == BackendCallException.NO_ANSWER || call.status() >= 500);
     }
 
     // RT-2/3/6: full jitter on the backoff, but never shorter than Retry-After

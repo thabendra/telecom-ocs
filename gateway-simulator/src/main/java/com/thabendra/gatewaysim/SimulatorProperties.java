@@ -15,7 +15,8 @@ public record SimulatorProperties(
         int usedPercent,
         long finalUsedMb,
         boolean replayEachRequest,
-        RetryPolicy retry) {
+        RetryPolicy retry,
+        FailOpenPolicy failOpen) {
 
     /** Which backend API the gateway calls; both carry the same charging operations. */
     public enum Protocol {

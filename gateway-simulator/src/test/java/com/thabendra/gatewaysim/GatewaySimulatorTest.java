@@ -1,6 +1,7 @@
 package com.thabendra.gatewaysim;
 
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import io.micrometer.observation.ObservationRegistry;
 import io.micrometer.observation.tck.TestObservationRegistry;
 import io.micrometer.observation.tck.TestObservationRegistryAssert;
 import org.junit.jupiter.api.BeforeEach;
@@ -14,6 +15,9 @@ import org.springframework.test.web.client.ResponseActions;
 import org.springframework.web.client.RestClient;
 
 import java.time.Clock;
+import java.time.Instant;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.util.HashSet;
 import java.util.Set;
 
@@ -136,17 +140,38 @@ class GatewaySimulatorTest {
     }
 
     @Test
-    void backendDownFailsOpenAfterRetries() {
-        for (int i = 0; i <= RetryPolicy.defaults().maxRetries(); i++) {
+    void backendDownFailsOpenAfterRetriesThenStopsCallingWhileTheCircuitIsOpen() {
+        for (int i = 0; i < RetryPolicy.defaults().failuresToOpen(); i++) {
             backend.expect(requestTo("http://backend" + START))
                     .andRespond(withStatus(HttpStatus.SERVICE_UNAVAILABLE));
         }
+        SimulatorProperties props = properties(5, false, SimulatorProperties.Protocol.REST);
+        Instant[] now = {Instant.parse("2026-11-01T00:00:00Z")};
+        Clock clock = new Clock() {
+            @Override
+            public Instant instant() {
+                return now[0];
+            }
 
-        GatewaySimulator.Outcome outcome = simulator(5, false).run();
+            @Override
+            public ZoneId getZone() {
+                return ZoneOffset.UTC;
+            }
+
+            @Override
+            public Clock withZone(ZoneId zone) {
+                return this;
+            }
+        };
+
+        // the fail-open checks move this clock, while the circuit stays open on real time
+        GatewaySimulator.Outcome outcome = new GatewaySimulator(chargingClient(SimulatorProperties.Protocol.REST, 5, false),
+                props, ObservationRegistry.NOOP, wait -> now[0] = now[0].plus(wait), clock, ChargingClient::newKey).run();
 
         backend.verify();
-        assertThat(outcome.failedOpen()).isTrue();   // RL-6: traffic is let through, not blocked
-        assertThat(outcome.blocked()).isFalse();
+        assertThat(outcome.failedOpen()).isTrue();   // RL-6: let through, within the limits, and then blocked
+        assertThat(outcome.blocked()).isTrue();
+        assertThat(outcome.unchargedMb()).isEqualTo(FailOpenPolicy.defaults().maxMb());
     }
 
     @Test
@@ -188,7 +213,8 @@ class GatewaySimulatorTest {
     private static SimulatorProperties properties(int maxUpdates, boolean replay,
                                                   SimulatorProperties.Protocol protocol) {
         return new SimulatorProperties("http://backend", "pgw-test-01", protocol,
-                "94771234567", "YOUTUBE", 100, maxUpdates, 100, 37, replay, RetryPolicy.defaults());
+                "94771234567", "YOUTUBE", 100, maxUpdates, 100, 37, replay, RetryPolicy.defaults(),
+                FailOpenPolicy.defaults());
     }
 
     private void expectSoap(String operation, String responsePayload, String... mustContain) {

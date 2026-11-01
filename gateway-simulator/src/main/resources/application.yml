@@ -55,3 +55,8 @@ simulator:
     total-budget: 1500ms         # RT-8: all tries and waits must fit in this, then fail open
     failures-to-open: 5          # RT-9: failed tries in a row that open the circuit
     open-for: 10s                # RT-9: fail open at once for this long, then try one call
+  fail-open:                     # RL-6: the failure contract with the backend, per user
+    max-duration: 5m             # from the first moment; then traffic is blocked until the backend answers
+    max-mb: 50                   # data allowed meanwhile; then blocked too
+    check-every: 2s              # how often the same request is tried again
+    mb-per-check: 5              # simulation: what the user uses between two checks

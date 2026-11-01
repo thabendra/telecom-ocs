@@ -17,7 +17,8 @@ import java.util.function.Supplier;
  *   ocs_charging_decisions_total{operation, result, gateway}   GRANT / DENY per gateway
  *   ocs_ratelimit_rejected_total{api, caller}                   429s: gateway / ip / customer / staff
  *   ocs_bulkhead_rejected_total, ocs_bulkhead_free_slots        503s and free database slots (RL-4)
- *   ocs_otp_sent_total, ocs_otp_checked_total{result}           logins; many "wrong" = someone guessing
+ *   ocs_load_shed_total                                         503s that keep slots for update / release (RL-5)
+ *   ocs_otp_sent_total, ocs_otp_checked_total{result}          logins; many "wrong" = someone guessing
  *   ocs_push_commands{status}                                   PENDING / SENT / FAILED commands (group 5)
  *   ocs_sessions_expired_total                                  sessions a gateway never released (CH-8)
  *   ocs_heavy_users_flagged_total                               subscribers who became heavy users (RL-3)
@@ -57,6 +58,12 @@ public class OcsMetrics {
     public void bulkheadRejected() {
         Counter.builder("ocs.bulkhead.rejected")
                 .description("Requests refused with 503: no free database slot")
+                .register(registry).increment();
+    }
+
+    public void loadShed() {
+        Counter.builder("ocs.load.shed")
+                .description("Requests refused with 503 to keep database slots for update and release")
                 .register(registry).increment();
     }
 

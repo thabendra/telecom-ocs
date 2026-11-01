@@ -41,6 +41,6 @@ class ChargingClientsTest {
 
     private static SimulatorProperties props(SimulatorProperties.Protocol protocol, boolean replay) {
         return new SimulatorProperties("http://backend", "pgw-test-01", protocol, "94771234567", "YOUTUBE",
-                100, 5, 100, 37, replay, RetryPolicy.defaults());
+                100, 5, 100, 37, replay, RetryPolicy.defaults(), FailOpenPolicy.defaults());
     }
 }

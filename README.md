@@ -251,6 +251,13 @@ free slot within 50 ms gets `503` + `Retry-After` at once, instead of waiting fo
 holding a thread while Oracle is slow. The database itself only gets more load when copies are added,
 so size it as `pool size x most copies <= sessions Oracle can take` and cap the autoscaler.
 
+**Load shedding (RL-5).** Update and release report usage that has to be charged and free reserved
+balance; a refused new session only tries again. So `reserved-slots` (3 of the 10) are kept for those two,
+over REST and SOAP. Everything else, new sessions first of all, is refused with `503` + `Retry-After` at
+once when it would need one of them, and counted in `ocs_load_shed_total`. With little traffic an update
+simply takes any free slot. The gateway doesn't count a `503` with `Retry-After` towards its circuit
+breaker: the backend is up, and an open breaker would stop the updates these slots are kept for.
+
 ```yaml
 telecom:
   rate-limit:
@@ -602,12 +609,25 @@ Every call goes through `RetryingCaller`:
 | Not retried | Any other answer (`400`, `401`, `403`, `404`, `422`, `500`, `409` "already processed") |
 | Wait | Full jitter: random(0, backoff), backoff 100 ms → 200 ms → 400 ms … capped at 1 s; never less than `Retry-After` |
 | Time limits | 200 ms per try (connect + read), **1.5 s** for all tries and waits together |
-| Circuit breaker | 5 failed tries in a row (network errors or 5xx) open it for 10 s: calls fail open at once |
+| Circuit breaker | 5 failed tries in a row (network errors or 5xx, but not a `503` with `Retry-After`) open it for 10 s: calls fail open at once |
 | Metrics | `gateway.retries`, `gateway.retries.succeeded`, `gateway.retries.exhausted`, `gateway.circuit.rejected` (printed at the end of a run) |
 
 When the retries, the time budget or the open circuit give up, the simulator **fails open**: it
-lets the user's traffic through and would charge it later, instead of blocking a paying customer
-because the backend is slow.
+lets the user's traffic through instead of blocking a paying customer because the backend is slow.
+
+**The failure contract (RL-6).** Fail open has limits, per user (`simulator.fail-open.*`):
+
+| Rule | Behaviour |
+|---|---|
+| Limits | At most **5 minutes** from the first moment, and at most **50 MB** |
+| Limit reached | The user's traffic is blocked until the backend answers |
+| Meanwhile | The same request (same key, same number) is tried again every 2 s, so it can't charge twice |
+| Backend back | The session goes on, and the MB used meanwhile are charged in a short session of their own (start + release): Oracle charges at most what is reserved, so adding them to the next report would lose them |
+| Can't be charged | No balance: the user is blocked, and the MB are lost. That loss is what the limits keep small |
+
+The worst case is known in advance: 50 MB per user per outage. The simulator is a one-shot run, so it
+ends at the 5-minute limit and logs what is still owed; a real gateway keeps blocking, and keeps the
+owed MB on disk so a restart doesn't lose them.
 
 ## SOAP operations
 
@@ -715,7 +735,9 @@ mvn test
   `Retry-After` over REST and SOAP, other gateways unaffected, a retry that would be replayed is
   limited too, and charging keeps working on the local bucket while Redis is paused.
   `LocalRateLimiterTest`, `GatewayRateLimiterTest` and `ConcurrencyLimitFilterTest` are unit tests
-  for the in-memory bucket, the fallback share and overrides, and the `503` bulkhead.
+  for the in-memory bucket, the fallback share and overrides, and the `503` bulkhead with its load
+  shedding (RL-5). `FailOpenTest` in the simulator: the limits, the same request sent again, the usage
+  charged afterwards (RL-6).
 - `IdempotencyTest`: retries against Oracle + Redis: replay, 400 / 422 / 409, keys per client, TTL,
   two copies of a request at the same moment run once, and the Oracle request-number check when
   Redis has lost the key or is unreachable (the Redis container is paused).

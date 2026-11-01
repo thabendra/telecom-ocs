@@ -178,6 +178,22 @@ class ChargingClientRetryTest {
     }
 
     @Test
+    void aBackendSheddingLoadDoesNotOpenTheCircuit() {   // RL-5: updates and releases must still get through
+        for (int i = 0; i < 6; i++) {   // 3 calls of 2 tries: try, wait 1 s, try, and the next wait is over budget
+            expect(withStatus(HttpStatus.SERVICE_UNAVAILABLE).header(HttpHeaders.RETRY_AFTER, "1"));
+        }
+
+        for (int call = 0; call < 3; call++) {
+            assertThatThrownBy(this::start).isInstanceOf(FailOpenException.class)
+                    .hasMessageContaining("Time budget");
+            clock.advance(Duration.ofSeconds(2));
+        }
+
+        backend.verify();
+        assertThat(caller.circuitState()).isEqualTo(CircuitBreaker.State.CLOSED);
+    }
+
+    @Test
     void circuitOpensAfterFiveFailuresInARowAndThenSkipsTheBackend() {   // RT-9
         // call 1: 4 failed tries; call 2: the 5th failure opens the circuit before its retry
         for (int i = 0; i < policy.failuresToOpen(); i++) {

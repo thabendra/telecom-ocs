@@ -40,7 +40,8 @@
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         { "refId": "A", "legendFormat": "503 per second", "expr": "sum(rate(ocs_bulkhead_rejected_total[1m]))" },
-        { "refId": "B", "legendFormat": "free slots {{instance}}", "expr": "ocs_bulkhead_free_slots" }
+        { "refId": "B", "legendFormat": "free slots {{instance}}", "expr": "ocs_bulkhead_free_slots" },
+        { "refId": "C", "legendFormat": "new sessions shed per second", "expr": "sum(rate(ocs_load_shed_total[1m]))" }
       ]
     },
     {

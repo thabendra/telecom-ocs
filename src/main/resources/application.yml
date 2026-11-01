@@ -126,6 +126,7 @@ telecom:
     overrides: {}                  # e.g. pgw-kandy-01: { capacity: 500, refill-per-second: 250 }
     max-in-flight: ${DB_POOL_SIZE:10}
     in-flight-wait: 50ms
+    reserved-slots: 3              # RL-5: of max-in-flight, only update and release may use these
   # group 11: circuit breakers in this backend, towards what it calls
   circuit:
     redis:                     # CB-1: many calls per second, so a percentage of the latest calls

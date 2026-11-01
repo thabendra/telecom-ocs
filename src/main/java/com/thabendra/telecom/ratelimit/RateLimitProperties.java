@@ -16,10 +16,11 @@ import java.util.Map;
  * @param maxInFlight     RL-4: requests one backend copy runs at the same moment; the same number as
  *                        its database pool. Rule: pool size x most copies <= sessions the database can take
  * @param inFlightWait    how long a request may wait for a free slot before it gets 503
+ * @param reservedSlots   RL-5: of maxInFlight, the slots only update and release may use
  */
 @ConfigurationProperties("telecom.rate-limit")
 public record RateLimitProperties(long capacity, double refillPerSecond, int instances, Map<String, Limit> overrides,
-                                  int maxInFlight, Duration inFlightWait) {
+                                  int maxInFlight, Duration inFlightWait, int reservedSlots) {
 
     /** One gateway's bucket: burst size and steady rate. */
     public record Limit(long capacity, double refillPerSecond) {

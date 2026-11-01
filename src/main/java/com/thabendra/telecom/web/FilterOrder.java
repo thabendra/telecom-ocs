@@ -13,7 +13,7 @@ import org.springframework.core.Ordered;
  *   RateLimitFilter     token left for this gateway?          429   (RL-1, RL-2)
  *   PublicRateLimit     token left for this user / IP?        429   (PR-3, public API)
  *   IdempotencyFilter   replay, or run once                   400 / 409 / 422
- *   ConcurrencyLimit    free database slot in this copy?      503   (RL-4)
+ *   ConcurrencyLimit    free database slot in this copy?      503   (RL-4, RL-5)
  *   controller / SOAP endpoint -> Oracle
  * </pre>
  * Rate limiting needs the caller's verified name, so it comes after security; a refused request then

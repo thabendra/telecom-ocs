@@ -33,6 +33,14 @@ groups:
         annotations:
           summary: "Requests refused with 503 because no database slot was free"
 
+      # RL-5: new sessions are being refused to keep slots for update and release
+      - alert: LoadShedding
+        expr: rate(ocs_load_shed_total[5m]) > 1
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "New sessions refused with 503: this backend copy is overloaded"
+
       # CB-3: a backend copy has stopped calling Redis or a key server. It works on its fallback, so
       # nothing is down for users yet, but the thing it calls needs a look
       - alert: CircuitBreakerOpen
